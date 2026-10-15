@@ -1,0 +1,41 @@
+name: ringlens
+
+services:
+  falkordb:
+    # Released v4.20.7; pin the multi-architecture manifest (amd64 + arm64).
+    image: falkordb/falkordb-server:v4.20.7@sha256:538fe1867a0a5dec55462eff5c1ea5edfc36246a9aa571cf1705b8b3f3d0f32c
+    ports:
+      - "127.0.0.1:${RINGLENS_FALKORDB_PORT:-6379}:6379"
+    environment:
+      RINGLENS_FALKORDB_PASSWORD: ${RINGLENS_FALKORDB_PASSWORD:?Set a password in .env first}
+    # Quote the password as one argument, even if it contains spaces or shell characters.
+    # Paths and module arguments verified against the released image's run.sh.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        exec redis-server
+        --protected-mode yes --bind 0.0.0.0
+        --requirepass "$${RINGLENS_FALKORDB_PASSWORD}"
+        --dir /var/lib/falkordb/data
+        --appendonly yes --appendfsync everysec
+        --save '60 1' --maxmemory-policy noeviction
+        --loadmodule /var/lib/falkordb/bin/falkordb.so
+        TIMEOUT_DEFAULT 5000 TIMEOUT_MAX 10000
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          export REDISCLI_AUTH="$${RINGLENS_FALKORDB_PASSWORD}";
+          test "$$(redis-cli -e ping)" = PONG &&
+          redis-cli -e GRAPH.CONFIG GET TIMEOUT_DEFAULT >/dev/null
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  falkordb_data:

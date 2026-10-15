@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ringlens"
+version = "0.1.0"
+description = "Graph-backed refund abuse investigation foundation using FalkorDB"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "falkordb>=1.8,<2",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "redis>=8.1,<9",
+    "typer>=0.15,<1",
+]
+
+[project.scripts]
+ringlens = "ringlens.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "ruff>=0.9,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ringlens"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: requires a real FalkorDB server; select with --run-integration",
+    "persistence: restarts the local Compose service; select with --run-persistence",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
