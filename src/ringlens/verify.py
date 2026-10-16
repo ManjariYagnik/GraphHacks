@@ -360,7 +360,14 @@ def graph_stats(store: GraphStore) -> dict:
     }
     relationships = {}
     if store.graph_exists():
-        for label in ("Dataset", "ImportBatch", "Investigation", "Evidence", "Review"):
+        for label in (
+            "Dataset",
+            "ImportBatch",
+            "Investigation",
+            "Evidence",
+            "Review",
+            "Assessment",
+        ):
             count, distinct = store.read(
                 f"MATCH (n:{label}) RETURN count(n), count(DISTINCT n.id)"
             ).result_set[0]
@@ -419,6 +426,7 @@ def sample_paths(
 
 def path_json(path: GraphPath) -> dict:
     """Serialize graph-returned paths without discarding endpoint IDs or direction."""
+    entity_ids = {node.id: node.properties.get("id") for node in path.nodes()}
     return {
         "nodes": [
             {
@@ -435,8 +443,25 @@ def path_json(path: GraphPath) -> dict:
                 "type": edge.relation,
                 "source_graph_id": edge.src_node,
                 "target_graph_id": edge.dest_node,
+                "source_id": entity_ids[edge.src_node],
+                "target_id": entity_ids[edge.dest_node],
                 "properties": dict(edge.properties),
             }
             for edge in path.edges()
+        ],
+    }
+
+
+def stable_path(path: dict) -> dict:
+    """Retain source IDs, properties, types and direction; omit physical driver IDs."""
+    return {
+        "nodes": [{k: v for k, v in node.items() if k != "graph_id"} for node in path["nodes"]],
+        "edges": [
+            {
+                k: v
+                for k, v in edge.items()
+                if k not in {"graph_id", "source_graph_id", "target_graph_id"}
+            }
+            for edge in path["edges"]
         ],
     }

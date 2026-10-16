@@ -9,6 +9,8 @@ import typer
 from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
+from ringlens.case_models import CaseAction
+from ringlens.cases import apply_case_policy, get_case, list_cases
 from ringlens.config import Settings
 from ringlens.dataset_io import load_dataset, read_batch
 from ringlens.graph_store import GraphStore, GraphStoreError
@@ -33,6 +35,10 @@ graph_app = typer.Typer(
     help="Verify stored graph truth and inspect sample paths.", no_args_is_help=True
 )
 app.add_typer(graph_app, name="graph")
+cases_app = typer.Typer(
+    help="Read published cases and immutable assessments.", no_args_is_help=True
+)
+app.add_typer(cases_app, name="cases")
 
 
 @app.callback()
@@ -214,8 +220,10 @@ def investigate_command(
     graph: Annotated[str | None, typer.Option("--graph")] = None,
     max_accounts: Annotated[int, typer.Option("--max-accounts", min=1, max=1000)] = 100,
     max_evidence: Annotated[int, typer.Option("--max-evidence", min=1, max=100_000)] = 2000,
+    create_case: Annotated[bool, typer.Option("--create-case")] = False,
+    display_paths: Annotated[int, typer.Option("--display-paths", min=0, max=1000)] = 20,
 ) -> None:
-    """Investigate a refund through actual graph paths; create no cases or reviews."""
+    """Assess a refund read-only, or explicitly apply the case creation policy."""
     try:
         assessment = parse_as_of(as_of) if as_of is not None else None
         settings = _load_settings(graph)
@@ -228,16 +236,111 @@ def investigate_command(
                     window_days=window_days, max_accounts=max_accounts, max_evidence=max_evidence
                 ),
             )
+            case_action = apply_case_policy(store, result) if create_case else None
     except (ValueError, GraphStoreError) as error:
         invalid = isinstance(error, InvestigationInputError) or (
             isinstance(error, ValueError) and not isinstance(error, InvestigationDataUnavailable)
         )
         kind = "INVALID_INPUT" if invalid else "DATA_UNAVAILABLE"
+        failure = {"error": {"kind": kind, "message": str(error)}}
+        if create_case:
+            failure["case_action"] = CaseAction(
+                action="NOT_CREATED_INCOMPLETE", reason=f"Investigation failed: {kind}."
+            ).model_dump(mode="json")
         if output_format == "json":
-            typer.echo(json.dumps({"error": {"kind": kind, "message": str(error)}}))
+            typer.echo(json.dumps(failure))
         else:
             typer.echo(f"Investigation failed [{kind}]: {error}", err=True)
         raise typer.Exit(code=2 if invalid else 1) from None
-    typer.echo(result.model_dump_json(indent=2) if output_format == "json" else render_text(result))
-    if result.completeness != "COMPLETE":
+    if output_format == "json":
+        payload = result.model_dump(mode="json")
+        if case_action:
+            payload["case_action"] = case_action.model_dump(mode="json")
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(render_text(result, path_limit=display_paths))
+        if case_action:
+            typer.echo(
+                f"Case: {case_action.action}; ID: {case_action.case_id or 'none'}; "
+                f"assessment: {case_action.assessment_id or 'none'}\n{case_action.reason}"
+            )
+            if case_action.requires_review:
+                typer.echo("Case requires review; reviewer status was preserved.")
+    if result.completeness != "COMPLETE" or (
+        case_action and case_action.action == "NOT_CREATED_INCOMPLETE"
+    ):
         raise typer.Exit(code=3)
+
+
+@cases_app.command("list")
+def cases_list_command(
+    output_format: Annotated[Literal["text", "json"], typer.Option("--format")] = "text",
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=1000)] = 100,
+) -> None:
+    """List published cases; disclose list truncation and unfinished cases."""
+    settings = _load_settings(graph)
+    try:
+        with GraphStore(settings) as store:
+            result = list_cases(store, limit=limit)
+    except (ValueError, GraphStoreError):
+        typer.echo(
+            json.dumps(
+                {"error": "Cannot read cases; check database health and saved-case integrity."}
+            )
+        )
+        raise typer.Exit(code=1) from None
+    if output_format == "json":
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        for item in result.cases:
+            case = item.investigation
+            typer.echo(
+                f"{case.id} {case.status} {case.priority} {case.score:g}/100; "
+                f"{item.assessment_count} assessments; requires_review={case.requires_review}"
+            )
+        typer.echo(
+            f"{len(result.cases)} published cases; truncated={result.truncated}; "
+            f"{result.pending_case_count} unpublished cases."
+        )
+
+
+@cases_app.command("show")
+def cases_show_command(
+    case_id: Annotated[str, typer.Option("--case-id")],
+    output_format: Annotated[Literal["text", "json"], typer.Option("--format")] = "text",
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+) -> None:
+    """Read a case, immutable snapshots, evidence, overlap flags, and existing reviews."""
+    settings = _load_settings(graph)
+    try:
+        with GraphStore(settings) as store:
+            result = get_case(store, case_id)
+    except (ValueError, GraphStoreError):
+        typer.echo(
+            json.dumps(
+                {"error": "Case unavailable or inconsistent; check its ID and publication state."}
+            )
+        )
+        raise typer.Exit(code=1) from None
+    if output_format == "json":
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        case = result.investigation
+        typer.echo(
+            f"{case.id}: {case.status}; {case.priority} {case.score:g}/100; "
+            f"requires_review={case.requires_review}"
+        )
+        typer.echo("Accounts: " + ", ".join(result.account_ids))
+        typer.echo("Latest assessment: " + case.latest_assessment_id)
+        for assessment in result.assessments:
+            typer.echo(
+                f"{assessment.id}: as_of={assessment.window_end}; "
+                f"{assessment.priority} {assessment.score}/100"
+            )
+        for review in result.reviews:
+            typer.echo(f"Review {review.id}: {review.outcome}; {review.explanation}")
+        typer.echo(
+            f"Overlapping cases: {result.overlapping_case_ids}; "
+            f"pending assessments: {len(result.pending_assessment_ids)}"
+        )

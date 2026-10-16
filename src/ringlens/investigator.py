@@ -20,7 +20,7 @@ from ringlens.investigation_models import (
 from ringlens.models import FILE_KINDS, AccountId, Evidence, RefundId, Timestamp, canonical_json
 from ringlens.scoring import score_records
 from ringlens.validation import SourceRecords, validate_records
-from ringlens.verify import GraphState, graph_records, path_json, read_history
+from ringlens.verify import GraphState, graph_records, path_json, read_history, stable_path
 
 
 class InvestigationInputError(ValueError):
@@ -183,7 +183,7 @@ def _proof(result, path, query_id):
     return id_
 
 
-def _findings(result, analysis):
+def build_evidence_findings(result, analysis):
     findings = []
     for rule in analysis.rules:
         if not rule.triggered:
@@ -192,7 +192,7 @@ def _findings(result, analysis):
         proofs = [
             proof
             for proof in result.paths
-            if proof.query_id in {"orders.v1", "refunds.v1", "refund_context.v1"}
+            if proof.query_id in {"orders.v1", "refunds.v1"}
             and event_ids.intersection(proof.source_ids)
         ]
         path_ids = sorted({proof.id for proof in proofs})
@@ -205,6 +205,8 @@ def _findings(result, analysis):
             "path_ids": path_ids,
             "query_ids": query_ids,
             "scoring_config": result.config.scoring.model_dump(),
+            "thresholds": rule.thresholds,
+            "points": rule.points,
         }
         identity = {
             "rule_id": rule.rule_id,
@@ -232,6 +234,16 @@ def _findings(result, analysis):
             )
         )
     return findings
+
+
+def assert_current_input(store: GraphStore, result: InvestigationResult):
+    """Recheck READY and successful input revision before publishing a saved assessment."""
+    dataset, descriptor, revision = _metadata(_Reader(store, result))
+    if dataset.id != result.dataset_id or revision != result.input_revision:
+        raise InvestigationDataUnavailable("Input revision changed; run a fresh assessment.")
+    if result.assessment_as_of is None or result.assessment_as_of > dataset.as_of:
+        raise InvestigationDataUnavailable("Assessment exceeds the available horizon; reassess.")
+    return dataset, descriptor
 
 
 def investigate(
@@ -301,7 +313,10 @@ def investigate(
         result.candidates.append(CandidateAccount(id=seed.account_id, depth=0))
         seed_paths = [_proof(result, path, "refund_context.v1") for path in context[0][1:]]
         result.candidates[0] = CandidateAccount(
-            id=seed.account_id, depth=0, path_ids=sorted(seed_paths)
+            id=seed.account_id,
+            depth=0,
+            path_ids=sorted(seed_paths),
+            seed_path={"nodes": [seed.account_id], "edges": []},
         )
         visited, frontier = {seed.account_id}, [seed.account_id]
         params = {"start": window.start, "end": window.end}
@@ -333,11 +348,26 @@ def investigate(
                     )
                 proof = _proof(result, paths[0][0], f"expansion_{depth}_path.v1")
                 reached_from = paths[0][0].nodes()[0].properties["id"]
+                segment = stable_path(path_json(paths[0][0]))
+                node_ids = [node["id"] for node in segment["nodes"]]
+                parent = next(c for c in result.candidates if c.id == reached_from)
+                if parent.depth == 0:
+                    complete_path = {"nodes": node_ids, "edges": segment["edges"]}
+                    complete_proofs = [proof]
+                else:
+                    if parent.seed_path is None or parent.seed_path["nodes"][-1] != reached_from:
+                        raise _Incomplete("The bridge's complete seed path is missing.")
+                    complete_path = {
+                        "nodes": [*parent.seed_path["nodes"], *node_ids[1:]],
+                        "edges": [*parent.seed_path["edges"], *segment["edges"]],
+                    }
+                    complete_proofs = [*parent.path_ids, proof]
                 result.candidates[-1] = CandidateAccount(
                     id=target,
                     depth=depth,
                     reached_from=reached_from,
-                    path_ids=[proof],
+                    path_ids=complete_proofs,
+                    seed_path=complete_path,
                 )
             visited.update(targets)
             if len(rows) > remaining:
@@ -378,7 +408,7 @@ def investigate(
             raise _Incomplete(
                 "Successful import metadata changed during investigation; retry on READY data."
             )
-        findings = _findings(result, analysis)
+        findings = build_evidence_findings(result, analysis)
         explanation = " ".join(rule.explanation for rule in analysis.rules if rule.triggered)
         if not explanation:
             explanation = "No configured prioritization rules were triggered in this window."
@@ -435,7 +465,7 @@ def investigate(
     return InvestigationResult.model_validate(result)
 
 
-def render_text(result: InvestigationResult) -> str:
+def render_text(result: InvestigationResult, *, path_limit: int = 20) -> str:
     lines = [
         f"{result.completeness}: {result.seed_refund_id}",
         f"Account: {result.seed_account_id or 'unavailable'}",
@@ -455,20 +485,20 @@ def render_text(result: InvestigationResult) -> str:
             f"{finding.evidence.rule_id} +{finding.evidence.contribution:g}: "
             f"{finding.explanation} Evidence {finding.evidence.id}"
         )
-    for proof in result.paths:
-        if proof.query_id not in {
-            "expansion_1_path.v1",
-            "expansion_2_path.v1",
-            "refund_context.v1",
-        }:
-            continue
+    primary = {"expansion_1_path.v1", "expansion_2_path.v1", "refund_context.v1"}
+    displayed = sorted(result.paths, key=lambda proof: (proof.query_id not in primary, proof.id))
+    for proof in displayed[:path_limit]:
         nodes, edges = proof.path["nodes"], proof.path["edges"]
         path = nodes[0]["id"]
         for index, edge in enumerate(edges):
-            forward = edge["source_graph_id"] == nodes[index]["graph_id"]
+            forward = edge["source_id"] == nodes[index]["id"]
             path += f" -[{edge['type']}]-> " if forward else f" <-[{edge['type']}]- "
             path += nodes[index + 1]["id"]
         lines.append(f"Path ({proof.query_id}): {path}")
+    if len(displayed) > path_limit:
+        lines.append(
+            f"Omitted {len(displayed) - path_limit} display paths; JSON retains all evidence."
+        )
     lines.extend(f"Context: {message}" for message in result.mitigating_context)
     lines.extend(
         f"Error [{issue.code}] ({issue.query_id}): {issue.message}" for issue in result.errors

@@ -171,6 +171,11 @@ def score_records(
     rules = [
         RuleSignal(
             rule_id="R1",
+            points=config.r1_points,
+            thresholds={
+                "min_accounts": config.min_accounts,
+                "max_device_users": config.max_device_users,
+            },
             triggered=bool(shared_devices),
             contribution=config.r1_points if shared_devices else 0,
             explanation=(
@@ -199,6 +204,11 @@ def score_records(
         ),
         RuleSignal(
             rule_id="R2",
+            points=config.r2_points,
+            thresholds={
+                "min_accounts": config.min_accounts,
+                "interval_seconds": config.burst_seconds,
+            },
             triggered=bool(bursts),
             contribution=config.r2_points if bursts else 0,
             explanation=burst_explanation,
@@ -207,6 +217,8 @@ def score_records(
         ),
         RuleSignal(
             rule_id="R3",
+            points=config.r3_points,
+            thresholds={"min_distinct_utc_start_dates": config.repeated_dates},
             triggered=repeated,
             contribution=config.r3_points if repeated else 0,
             explanation=(
@@ -221,6 +233,13 @@ def score_records(
         ),
         RuleSignal(
             rule_id="R4",
+            points=config.r4_points,
+            thresholds={
+                "min_accounts": config.min_accounts,
+                "min_orders": config.min_orders,
+                "rate_numerator": config.rate_numerator,
+                "rate_denominator": config.rate_denominator,
+            },
             triggered=len(elevated) >= config.min_accounts,
             contribution=config.r4_points if len(elevated) >= config.min_accounts else 0,
             explanation=(
@@ -238,6 +257,8 @@ def score_records(
         ),
         RuleSignal(
             rule_id="R5",
+            points=config.r5_points,
+            thresholds={"min_accounts": config.min_accounts},
             triggered=bool(shared_addresses),
             contribution=config.r5_points if shared_addresses else 0,
             explanation=(

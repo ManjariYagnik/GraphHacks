@@ -1,9 +1,11 @@
-# Read-only graph investigation (Phase 5)
+# Graph investigation, priority, and explicit case creation
 
 RingLens follows actual FalkorDB relationships from a refund, performs two account
 expansions through devices, and returns source records, explanation paths, and
-explicit v1 priority contributions. It creates no Investigation, Evidence, or
-Review nodes. There is no LLM, case automation, or dashboard in this phase.
+explicit v1 priority contributions. The default investigation remains read-only.
+`--create-case` additionally applies the completed-assessment case policy described
+in [cases.md](cases.md), preserving immutable history and existing reviewer decisions.
+There is no LLM, review workflow, or dashboard in this milestone.
 
 This guide contains human demo scenario names and IDs. It is excluded from runtime
 Docker build contexts with `evaluation/` and the other human scenario/status guides.
@@ -24,6 +26,8 @@ uv run ringlens ingest --input data/demo/base
 # Pattern A and pattern B, using real seed-42 fixture IDs.
 uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15
 uv run ringlens investigate --refund-id ref_9082163771ef0a5e5b26 --format json
+uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15 --create-case --format json
+uv run ringlens cases list --format json
 
 # Explicit base horizon also works if append was imported previously.
 uv run ringlens investigate --refund-id ref_4d44e5cc3e0a8dae77fd --as-of 2026-10-15T10:00:00Z
@@ -46,6 +50,11 @@ Source records come only from those paths and are also bounded by their endpoint
 There are at most five triggered rule evidence objects. The separate fixed
 context limit detects ambiguity; ordered discovery-path queries intentionally
 choose one representative witness per newly reached account, not all witnesses.
+Each candidate also has a complete `seed_path` with stable entity IDs and directed
+relationships, and the ordered `path_ids` needed to follow its actual query-returned
+segments through the bridge. Depth-1 witnesses have four edges and depth-2 witnesses
+have eight. A separate `--display-paths` (20) caps text rendering after computation;
+omitted path counts are disclosed. JSON, scoring, and persistence retain all evidence.
 
 ## Verified scenario results
 
@@ -116,8 +125,10 @@ and [ORDER BY](https://docs.falkordb.com/cypher/order-by) documentation.
    window. Only the newly discovered first frontier is expanded again. Visited
    IDs are excluded in FalkorDB; Python tracks depth and deduplicates candidates.
    Addresses are never traversal edges. Each new account retains `reached_from`
-   and a deterministic, actual four-edge path (`expansion_N_path.v1`), so depth-2
-   explanations can be followed back through the depth-1 account to the seed.
+   and a deterministic, actual four-edge segment (`expansion_N_path.v1`). Depth-2
+   explanations concatenate the parent's actual seed segment and its new segment
+   into a complete witness, including the intermediate account, without fabricating
+   a shortcut relationship.
 3. `orders.v1` and `refunds.v1` retrieve all required source paths for candidates
    within the window, including shipping and refund ownership. Refund-associated
    orders are retained as context even if their placement predates the window.
@@ -193,6 +204,10 @@ Triggered findings wrap the existing strict `Evidence` model, ready for a future
 case writer, with canonical validated `details_json`, query IDs, and path IDs.
 Evidence IDs are `ev_` plus SHA-256 of canonical rule ID/version, source IDs,
 window, measured details, supporting path IDs/query IDs, and scoring configuration.
+Evidence identity uses the complete candidate order/refund query provenance, excluding
+seed-specific context/discovery witnesses. Another seed with the same group, window,
+and evidence therefore has identical findings. Each rule reports configured points
+and thresholds separately from its measured facts and awarded contribution.
 Path IDs similarly hash semantic source properties/directed endpoints, query ID,
 and window. Physical database IDs remain in returned paths but are excluded from
 these identities. Identical data/configuration yields the same analytical result
@@ -216,14 +231,16 @@ the last complete evidence subset if a later query/path bound fails.
 ```sh
 uv run pytest tests/unit/test_scoring.py tests/unit/test_investigator.py
 uv run pytest tests/integration/test_investigation.py --run-integration
+uv run pytest tests/integration/test_cases.py --run-integration
 uv run pytest --run-persistence
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-Actual Phase 5 regression result: **290 passed** (245 unit, 45 integration,
-including 19 investigation integration checks and the existing real database
-restart-persistence test). Ruff and offline lockfile consistency checks passed.
+The original Phase 5 regression had 290 passing tests. The current milestone adds
+case identity/publication/history checks; see the latest actual results in
+[implementation status](implementation-status.md). Ruff and offline lockfile
+consistency checks also passed.
 Tests use uniquely named graphs, verify absence before creation, and clean up
 only their owned graph. The persistence check briefly restarts the shared local
 service and preserves its named volume. No application graph was reset/imported
@@ -246,19 +263,17 @@ are not claimed. Two expansions intentionally do not exhaust an arbitrarily
 large connected component. Query failures/state changes were injected in tests;
 no production process was deliberately disconnected or corrupted.
 
-## Phase 6 case and reviewer persistence
+## Case persistence and the later agent
 
-Persist only COMPLETE results against the expected READY input revision, using
-the existing Investigation, Evidence, and Review models and allowed relationships.
-Assign case identity/lifecycle and runtime created/updated timestamps, link distinct
-candidate accounts with INCLUDES, and MERGE deterministic Evidence IDs without
-overwriting differing content. Preserve semantic paths, source IDs, window, rule
-configuration, revision, and measured facts in validated JSON strings (or a reviewed
-versioned contract extension); never assign nested dictionaries to graph properties.
-Physical edge IDs alone are insufficient after graph recreation.
+`cases.apply_case_policy(store, result)` persists only COMPLETE assessments for a
+still-current READY input revision. MEDIUM/HIGH creates a new OPEN case; LOW creates
+none for a new group, but can update an applicable existing case without closing it.
+Case keys exclude the seed, and successful assessments are immutable history.
+`cases.list_cases()` and `cases.get_case()` read only published results. The full
+identity, overlap, completion-marker, retry, and reviewer-preservation contract is
+in [cases.md](cases.md).
 
-Phase 6 must implement review outcomes/explanations/timestamps, HAS_REVIEW and
-ABOUT endpoint validation, evidence membership, case transition/reopen policy,
-and preservation of earlier assessments/reviews when append changes the input.
-An account gains no permanent status from a priority or reviewer decision. No such
-case writer, review workflow, or persistence is implemented in Phase 5.
+The later tool-calling agent can compose these services with `investigate()`;
+deterministic code remains responsible for evidence, score, priority, and case policy.
+Review outcomes and case transition/reopening workflows remain later work. An
+account gains no permanent status from a priority or reviewer decision.

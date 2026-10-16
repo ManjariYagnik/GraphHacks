@@ -73,6 +73,7 @@ class CandidateAccount(StrictRecord):
     depth: Literal[0, 1, 2]
     reached_from: AccountId | None = None
     path_ids: list[str] = Field(default_factory=list)
+    seed_path: dict[str, JsonValue] | None = None
 
 
 class RefundBurst(StrictRecord):
@@ -97,6 +98,8 @@ class RuleSignal(StrictRecord):
     rule_id: Literal["R1", "R2", "R3", "R4", "R5"]
     triggered: bool
     contribution: Annotated[int, Field(ge=0, le=100)]
+    points: Annotated[int, Field(ge=0, le=100)]
+    thresholds: dict[str, JsonValue]
     explanation: str
     source_ids: list[SourceId]
     details: dict[str, JsonValue]

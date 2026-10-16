@@ -1,5 +1,204 @@
 # RingLens implementation status
 
+## Traversal, scoring, and case-creation milestone
+
+Updated: 2026-10-16 (Asia/Kolkata).
+
+Complete through working case creation and immutable assessment history. The
+existing Phase 5 read-only investigation and v1 arithmetic were reused, not replaced.
+The canonical source models/IDs/amounts/timestamps, fixture bytes/manifests,
+ingestion behavior, and dependency lockfile remain unchanged. No applicable
+AGENTS.md was found. Existing work was preserved; no commit was requested.
+LLM orchestration, review submission/lifecycle policy, automatic reopening, and
+the dashboard remain deferred.
+
+### Inspection and previous verification
+
+Read README, this status, graph/data-contract/investigation/scenario documentation,
+source and metadata models, graph wrapper, schema initialization, manifests,
+ingestion/verification code, and existing tests. Before extending them:
+
+- `.venv/bin/pytest tests/unit -q`: **245 passed**.
+- `.venv/bin/pytest tests/integration --run-integration -q --tb=short`:
+  **44 passed**, one restart test skipped without its explicit persistence option.
+- `.venv/bin/ruff check .`: passed.
+
+Database checks used the running pinned FalkorDB container with approved sandbox
+network/socket access. Source/case mutations and cleanup targeted owned UUID-named
+disposable graphs only. The application graph and named volume were not reset or
+loaded with test records. The final persistence run briefly restarted the shared
+local database while preserving its volume.
+
+### Files and service responsibilities
+
+- `src/ringlens/case_models.py`: strict CaseRecord extension of Investigation,
+  Assessment completion/snapshot model, CaseAction, and published reader DTOs.
+  Original Investigation, Evidence, Review, and source models remain unchanged.
+- `src/ringlens/case_queries.py`: fixed parameterized staging, immutable MERGE,
+  endpoint/evidence verification, overlap flags/links, final publication, and readers.
+- `src/ringlens/cases.py`: deterministic group/assessment identity, complete-result
+  arithmetic/evidence validation, current-input guards, case policy, idempotent
+  publication/recovery, immutable history, compatible evidence, and review readers.
+- `src/ringlens/investigator.py`: seed-independent evidence fingerprints, a shared
+  pre-persistence READY/revision guard, complete seed-to-candidate path witnesses,
+  and a separate text-only display cap. Discovery and scoring semantics stay v1.
+- `src/ringlens/investigation_models.py`: complete semantic candidate seed paths
+  and explicit per-rule thresholds/available points as well as awarded contribution.
+- `src/ringlens/scoring.py`: exposes configured thresholds/points for every rule;
+  the existing rolling-window arithmetic, rates, priorities, and contributions persist.
+- `src/ringlens/verify.py`: stable entity-ID edge endpoints/path normalization and
+  Assessment node counts. Existing ingestion graph verification remains intact.
+- `src/ringlens/schema.py`: additive Assessment label, history/latest/overlap
+  relationship allowlist, and five range indexes, for 25 total. Initialization
+  seeds no data, preserves old indexes/records, and remains idempotent.
+- `src/ringlens/cli.py`: `investigate --create-case`, `--display-paths`,
+  `cases list`, `cases show --case-id`; JSON/text output and explicit graph overrides.
+  CLI delegates analysis, policy, and storage to reusable services.
+- `tests/unit/test_case_contracts.py`: **18** offline identity/configuration,
+  strict JSON/publication-model, input-bound, and incomplete/no-write checks.
+- `tests/integration/test_cases.py`: **21** real-database case acceptance checks,
+  including idempotency, alternate seeds, immutable snapshots, reviews/CLOSED
+  status, overlapping groups, failures/crash/ack loss, MEDIUM/LOW policy,
+  fresh-process readers, source-state guard, shared lease, and 20 → 25 schema upgrade.
+- README, `docs/investigation.md`, `docs/cases.md`, `docs/graph-schema.md`, this
+  status: workflow, contracts, commands, decisions/results, limitations, tool interfaces.
+  `.dockerignore` additionally excludes the human case guide containing demo IDs.
+
+### Identity, history, and failure decisions
+
+Group key hashes dataset ID plus sorted candidate account IDs, excluding the seed.
+Case ID is `inv_` + group key. Assessment ID hashes group key, successful import
+revision, inclusive window, rule version, and scoring configuration (so v1 overrides
+cannot collide). Evidence IDs use candidate order/refund query provenance rather
+than seed-specific context; another seed yielding the same group/evidence reuses
+case, assessment, and Evidence. Resource/display caps do not change complete
+analytical identity. A different analytical payload under an existing key is rejected.
+
+The immutable JSON snapshot retains the first request's seed, candidate depths,
+complete 4/8-edge seed witnesses, semantic source paths, measurements/thresholds,
+findings, mitigating facts, and source records. Physical graph IDs are retained
+in read-only driver explanations but omitted from saved snapshots/identities.
+Another seed can safely resume an interrupted write without replacing that snapshot.
+
+Case creation requires COMPLETE MEDIUM/HIGH. New LOW groups return
+NO_CASE_REQUIRED; exact existing cases can receive LOW reassessments without
+automatic closure. Existing status and Review/ABOUT/HAS_REVIEW are preserved.
+CLOSED + new assessment stays CLOSED and sets requires_review. Changed qualifying
+groups create separate cases with canonical OVERLAPS links and review flags on
+both; LOW changed groups create no case but flag overlapping existing cases and
+return those IDs. Membership history is never overwritten or silently merged.
+
+READY/revision is rechecked before staging, under the shared ingestion writer
+lease, and before publication. New headers/assessments are LOADING while endpoints
+and exact evidence/cardinalities are verified. A single final guarded query
+publishes READY and consistent latest edge/property/current score without touching
+reviewer status. Published cases keep the previous completed assessment readable
+if an update fails. Readers exclude LOADING history and disclose pending IDs/counts.
+Case HAS_EVIDENCE is the completed-history union; scores use each assessment's own
+evidence, never the sum across history. Completed replays return EXISTING_UNCHANGED.
+
+The multi-query write is not atomic as a whole. It uses idempotency/completion
+markers instead of assuming a Neo4j transaction API. Process crashes can retain
+LOADING and a lease up to 120 seconds. Retry safely finishes the same identity;
+if imports changed, reassess under the new revision and leave stale unfinished
+history explicitly pending. Final acknowledgement loss is reconciled from stored
+completion state when possible; otherwise the action reports uncertainty, not a
+claim that a write definitely failed. Unrecognized runtime errors are sanitized.
+
+Case and ingestion writers share the existing renewable lease. Single-writer use
+is required; fencing, transactional multi-query reads, concurrent review updates,
+and arbitrary external Cypher mutation are not supported concurrency guarantees.
+Legacy Investigation nodes without publication metadata are preserved, not silently
+adopted as managed cases. Native uniqueness constraints remain uninstalled/unclaimed.
+
+### Actual final checks
+
+| Command/check | Actual result |
+| --- | --- |
+| `.venv/bin/pytest --run-persistence --tb=short -q` | **329 passed**, no skips, in **14.62 seconds** |
+| Unit tests in final run | **263 passed**, including 18 new case-contract checks |
+| Integration tests in final run | **66 passed**: 21 cases, 19 investigation, 22 ingestion, 4 existing graph/schema/persistence |
+| `.venv/bin/ruff check .` | Passed |
+| `.venv/bin/ruff format --check .` | Passed; 43 Python files formatted |
+| `UV_CACHE_DIR=.tools/uv-cache UV_PYTHON_INSTALL_DIR=.tools/python .tools/uv-package/bin/uv lock --check --offline` | Passed; existing 25-package lock unchanged |
+| `ringlens investigate --help`, `ringlens cases --help` | Passed |
+| `git diff --check` | Passed |
+
+The first case-test run exposed an invalid overlap test attempt whose short window
+excluded the seed; the test was replaced with a deterministic valid append fixture
+that adds a connected account, preserving immutable originals. The final full run
+above includes the corrected test. No implementation contract was relaxed.
+
+Live checks verified actual supporting edge IDs/directions and complete bridge
+witnesses; duplicate paths do not change scores. Boundary, disjoint burst, global
+device-user, source validation, and controlled device-change tests from Phase 5
+all still pass. Read-only investigation and identical completed case requests
+leave the graph unchanged. Source verification still succeeds with saved cases.
+Reviews and original completed snapshots survive append and lower-priority updates.
+New connections and a genuinely fresh Python CLI process can read saved cases.
+The original persistence check performs a real database restart and marker retention.
+Write failures, crashes, acknowledgement loss, and readiness races are injected
+test conditions; no application process/data was deliberately corrupted.
+
+### Observed default results and commands
+
+| Scenario | Candidate count after expansion 1 → 2 | Triggered rules | Score / priority | Case outcome |
+| --- | --- | --- | --- | --- |
+| Pattern A | 4 → 4 | R1–R4 | 90 / HIGH | CREATED; same/other seed EXISTING_UNCHANGED; append UPDATED |
+| Pattern B | 3 → 5 | R1–R4 | 90 / HIGH | CREATED; same/other seed EXISTING_UNCHANGED; append UPDATED |
+| Household base | 3 → 3 | R1, R5 | 35 / LOW | NO_CASE_REQUIRED for a new group |
+| Household appended | 3 → 3 | R1–R5 | 100 / HIGH | CREATED; replay EXISTING_UNCHANGED |
+
+Pattern B's two distant accounts have depth 2 and full bridge witnesses. The
+base household has no synchronized burst; append supplies two disjoint qualifying
+UTC dates and rates 3/5. A configurable 65/MEDIUM case was also created, then
+updated to 0/LOW while remaining OPEN. Separate CLOSED/review preservation checks
+passed. No synthetic result establishes real-world detection accuracy or wrongdoing.
+
+```sh
+docker compose up -d --wait
+uv run ringlens schema init
+uv run ringlens ingest --input data/demo/base
+uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15 --format json
+uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15 --create-case --format json
+uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15 --create-case --format json
+uv run ringlens investigate --refund-id ref_00b5f41368d036aaeb49 --create-case --format json
+uv run ringlens investigate --refund-id ref_9082163771ef0a5e5b26 --create-case --format json
+uv run ringlens investigate --refund-id ref_4d44e5cc3e0a8dae77fd --create-case --format json
+uv run ringlens cases list --format json
+uv run ringlens cases show --case-id inv_08bd438528dd4ef3dadcc0940b424d9874784349e814c4527b9df85dd00577ee --format json
+uv run ringlens ingest --input data/demo/new_evidence
+uv run ringlens investigate --refund-id ref_2b42ec18e21a70bdfa15 --create-case --format json
+uv run ringlens investigate --refund-id ref_9082163771ef0a5e5b26 --create-case --format json
+uv run ringlens investigate --refund-id ref_4d44e5cc3e0a8dae77fd --create-case --format json
+uv run ringlens graph verify
+```
+
+Commands for fixture generation, fresh-graph use, historical windows, all stable
+case IDs, and unit/integration checks are in `docs/cases.md`. Add `--graph NAME`
+consistently for a separate demo. Existing configured cases return replay actions;
+never clear an application graph/volume to force CREATED. `.venv/bin/ringlens`,
+`.venv/bin/pytest`, and `.venv/bin/ruff` work when uv is not on PATH.
+
+### Remaining scope and later agent interfaces
+
+No required milestone behavior remains blocked/unverified. Real power-loss/backup
+recovery, large-graph performance, concurrent snapshot/fenced writers, and review
+submission/reopening policy were not implemented or claimed. Query-crash/ack tests
+were simulated; saved-case application restart checks used actual fresh connections
+and subprocesses. Evaluation ground truth was consumed only by evaluation tests;
+production investigation/case services do not read labels or fixture files.
+
+Later tools can call `investigator.investigate(store, refund_id, as_of=None,
+config=None)`, `cases.apply_case_policy(store, result)`, `cases.list_cases(store,
+limit=100)`, and `cases.get_case(store, case_id)`. The CLI composes these same
+services. Use the internally computed result for persistence; do not accept
+agent-invented scores/raw Cypher/evaluation input. The next milestone can add
+review validation/lifecycle and the LLM orchestration layer without replacing
+graph traversal, deterministic arithmetic, or case identity/history.
+
+---
+
 ## Phase 5 — graph investigation, evidence, and transparent priority
 
 Updated: 2026-10-16 (Asia/Kolkata).

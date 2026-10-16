@@ -10,8 +10,9 @@ and local database setup. Phase 2 adds strict records, cross-record validation,
 the file contract, and additive schema initialization. Phase 3 adds deterministic
 synthetic fixtures and file validation. Phase 4 adds validated, resumable FalkorDB
 ingestion and graph verification. Phase 5 adds two device expansions, evidence
-paths, and transparent v1 priority rules. Case persistence, reviewer memory,
-orchestration, the LLM, API servers, and dashboards remain deferred.
+paths, and transparent v1 priority rules. The case milestone adds explicit case
+creation, immutable assessment history, duplicate prevention, and saved-case readers.
+The review workflow, LLM orchestration, API servers, and dashboards remain deferred.
 
 ## Setup
 
@@ -105,20 +106,35 @@ After a successful import, investigate a stored refund using graph relationships
 uv run ringlens investigate --refund-id REFUND_ID
 uv run ringlens investigate --refund-id REFUND_ID --format json
 uv run ringlens investigate --refund-id REFUND_ID --window-days 30 --as-of 2026-10-15T10:00:00Z
+uv run ringlens investigate --refund-id REFUND_ID --create-case --format json
+uv run ringlens cases list --format json
+uv run ringlens cases show --case-id CASE_ID --format json
 ```
 
 The default assessment time is the READY Dataset's imported horizon. Two device
 expansions find candidate accounts; addresses provide supporting evidence.
 Results include actual paths, deduplicated source records, deterministic evidence
 IDs, and the five explicit v1 rule contributions. Priority is for demonstration,
-not a probability or proof of abuse. No cases, evidence nodes, or reviews are written.
+not a probability or proof of abuse. Without `--create-case`, investigation writes
+nothing. With it, COMPLETE MEDIUM/HIGH assessments create or update a case;
+LOW creates no new case but may update an existing one. Incomplete assessments
+never publish cases. Reviewer status and earlier assessments are preserved.
+
+Group keys exclude the seed refund, so another seed with the same group/evidence
+reuses the case and assessment. New input/window/scoring configuration appends an
+assessment; a changed group gets its own case and overlap review flags. CLOSED
+cases stay CLOSED. Case readers show only completed assessments and use the latest
+assessment's score; historical evidence contributions are never added together.
+Rerun `schema init` to add five indexes (25 total), without removing data or indexes.
 
 Use `--graph NAME` for disposable graphs. `--max-accounts` (100) and
 `--max-evidence` (2000 distinct paths, also a per-query row bound) limit work.
 Truncation or a failed query returns INCOMPLETE without a score/priority and exits 3;
-missing/non-READY data exits 1 and invalid inputs exit 2.
+missing/non-READY data exits 1 and invalid inputs exit 2. `--display-paths` caps
+text rendering only, after analysis, and discloses omitted paths. JSON remains full.
 See the human-only [investigation guide](docs/investigation.md) for actual generated
-refund IDs, observed scenario results, rule definitions, and Phase 6 persistence notes.
+refund IDs and rules, and the [case guide](docs/cases.md) for a complete demo,
+identities, completion/retry semantics, and interfaces for later agent tools.
 
 ## Durability and shutdown
 
@@ -160,6 +176,7 @@ uv run pytest
 uv run pytest tests/integration --run-integration
 uv run pytest tests/integration --run-persistence
 uv run pytest tests/integration/test_ingest.py --run-integration
+uv run pytest tests/integration/test_cases.py --run-integration
 ```
 
 Generate and validate the synthetic fixtures without a database:

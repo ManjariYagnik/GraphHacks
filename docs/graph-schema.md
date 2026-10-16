@@ -1,8 +1,9 @@
 # RingLens graph schema 1.0
 
 FalkorDB is the authoritative runtime store. Graph relationships determine the
-connections available to investigations. Phase 2 defines schema and validation;
-generation, importing, scoring, and case workflows remain future work.
+connections available to investigations. The source contract remains 1.0. The
+case milestone adds Assessment/history/publication metadata without changing source
+records, import metadata, fixture manifests, or the existing review model.
 
 `models.py` uses strict Pydantic records with unknown fields forbidden. IDs are
 case-sensitive strings with the prefix below and a nonempty ASCII suffix: first
@@ -49,9 +50,9 @@ one refund per order, and every source event ≤ `as_of`. These cross-record che
 are separate from individual models. The input snapshot exists only for validation;
 it is not a runtime graph substitute.
 
-## Future case memory (defined, never seeded)
+## Case memory (created only by explicit case requests)
 
-All fields below are stored properties. Related entity IDs use the relationships
+The original models below are reused. Related entity IDs use the relationships
 below rather than additional fields on these records.
 
 | Label | Fields |
@@ -81,9 +82,9 @@ Allowed case relationships:
 - `(Investigation)-[:HAS_REVIEW]->(Review)`
 - `(Review)-[:ABOUT]->(Evidence)`
 
-The future case writer must check endpoints, avoid duplicate edges, and ensure a
-review's evidence belongs to the investigation containing that review. No case
-state-transition engine is implemented in this phase.
+The case writer checks endpoints and avoids duplicate edges. Review nodes/links
+are preserved; no review writer, automatic reopening, or reviewer state-transition
+engine is implemented. The future review workflow must validate ABOUT membership.
 
 `details_json` is a string encoding a validated JSON object. Use
 `evidence_details_json(details)` to explicitly encode a dictionary before assigning
@@ -97,6 +98,50 @@ support the chosen integers, doubles, strings, and arrays of strings. Maps may b
 query parameters/results but cannot be stored as nested properties. Null metadata
 values remain explicit nulls in models but are omitted from graph properties with
 `model_dump(exclude_none=True)`.
+
+### Additive case publication and assessment history
+
+`case_models.CaseRecord` extends the unchanged strict `Investigation` model with:
+`dataset_id`, `group_key` (SHA-256), `publication_status` (LOADING/READY), optional
+`latest_assessment_id`, and boolean `requires_review`. The stable case ID is
+`inv_` plus the hash of dataset ID and sorted candidate account IDs. Its INCLUDES
+membership is immutable; overlapping changed groups are not silently merged.
+Reviewer `status` stays separate from publication state, score, and priority.
+
+The new `Assessment` label has properties:
+
+| Fields | Meaning |
+| --- | --- |
+| `id` (`asm_` + SHA-256), `dataset_id`, `group_key` | Stable assessment identity and parent group |
+| `input_revision`, `window_start`, `window_end`, `rule_version`, `config_hash` | Successful import revision and analytical configuration |
+| `score`, `priority`, `analytical_hash` | This assessment's result and seed-independent content fingerprint |
+| `snapshot_json` | Validated canonical JSON string containing the full COMPLETE assessment, semantic paths, source records, measurements, and evidence |
+| `overlap_case_ids` | String array of overlaps observed when this snapshot was staged |
+| `status`, `created_at`, optional `completed_at` | LOADING/READY completion marker and runtime timestamps |
+
+Snapshots and analytical fields are immutable; only LOADING → READY and completion
+time change during publication. READY requires a completion time. Readers exclude
+LOADING history and require the case's latest property/edge to agree with a READY
+assessment and its score, priority, version, and horizon. Existing-case staging
+leaves the prior completed assessment visible until publication succeeds.
+
+Additional allowed relationship signatures:
+
+- `(Investigation)-[:HAS_ASSESSMENT]->(Assessment)`
+- `(Investigation)-[:LATEST_ASSESSMENT]->(Assessment)` (one published latest)
+- `(Assessment)-[:HAS_EVIDENCE]->(Evidence)`
+- `(Investigation)-[:OVERLAPS]->(Investigation)` (one edge, lower case ID to higher)
+
+Existing Investigation INCLUDES and HAS_EVIDENCE remain supported. Case HAS_EVIDENCE
+is the union of evidence from completed history; the current score comes only
+from LATEST_ASSESSMENT. Reviews and ABOUT links are never rewritten. OVERLAPS is
+read in either direction and sets `requires_review` without changing reviewer status.
+The allowlist now has 11 labels and 13 distinct relationship types (14 signatures,
+because HAS_EVIDENCE has two allowed source labels).
+
+Booleans, scalars, and arrays of strings are supported by the pinned server and
+live tests. Nested paths, records, thresholds, and measurements stay inside
+validated JSON strings. See [cases.md](cases.md) for exact keys and retry behavior.
 
 ## Import metadata
 
@@ -130,9 +175,9 @@ Existing data and indexes are never dropped or replaced. Completed indexes remai
 after failure; rerun to finish. Run one initializer/importer per graph at a time.
 A verified concurrently created index is accepted; unrelated errors still fail.
 
-Range indexes cover `id` on all ten labels, plus:
+Range indexes cover `id` on all eleven labels, plus:
 
-| Label | Timestamp indexes |
+| Label | Additional indexes |
 | --- | --- |
 | Account | `created_at` |
 | Order | `placed_at` |
@@ -142,6 +187,14 @@ Range indexes cover `id` on all ten labels, plus:
 | Review | `reviewed_at` |
 | Dataset | `as_of` |
 | ImportBatch | `started_at` |
+| Assessment | `window_end`, `created_at`, `input_revision` |
+| Investigation | `group_key` |
+
+There are 25 range indexes. Upgrading the original 20-index graph creates only
+Assessment.id, Assessment.window_end, Assessment.created_at,
+Assessment.input_revision, and Investigation.group_key. Repeating initialization
+creates none. This upgrade was verified with existing imported records intact;
+no cases, assessments, or other data are seeded by initialization.
 
 **Indexes accelerate lookups; they do not enforce uniqueness.** Native `UNIQUE`
 and `MANDATORY` support was checked in the pinned release's
