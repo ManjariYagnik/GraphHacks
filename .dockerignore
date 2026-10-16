@@ -12,3 +12,5 @@ dist/
 evaluation/
 **/evaluation/
 docs/demo-scenarios.md
+docs/implementation-status.md
+docs/investigation.md

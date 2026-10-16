@@ -214,6 +214,7 @@ def test_committed_demo_files_match_generation_and_scenarios():
     assert truth["seed"] == 42 and truth["base_as_of"] == AS_OF
     assert_scenarios(raw_records(output / "base"), raw_records(output / "new_evidence"), truth)
     demo = generate_demo(seed=42, as_of=AS_OF)
+    assert evaluation.read_bytes() == canonical(demo.ground_truth) + b"\n"
     for name, batch in (("base", demo.base), ("new_evidence", demo.new_evidence)):
         for filename, payload in batch_bytes(batch).items():
             assert (output / name / filename).read_bytes() == payload
@@ -232,9 +233,10 @@ def test_reproducible_bytes_and_no_unseeded_randomness(generated, tmp_path, monk
         if file.is_file():
             assert file.read_bytes() == (other / file.relative_to(output)).read_bytes()
     assert evaluation.read_bytes() == other_truth.read_bytes()
-    assert generate_demo(seed=43, as_of=AS_OF).base.manifest.batch_id != (
-        generate_demo(seed=42, as_of=AS_OF).base.manifest.batch_id
-    )
+    changed = generate_demo(seed=43, as_of=AS_OF)
+    original = generate_demo(seed=42, as_of=AS_OF)
+    assert changed.base.manifest.batch_id != original.base.manifest.batch_id
+    assert batch_bytes(changed.base)["orders.jsonl"] != batch_bytes(original.base)["orders.jsonl"]
 
 
 def test_overwrite_is_explicit_and_conflicts_are_checked_before_any_write(generated):
@@ -562,4 +564,15 @@ def test_evaluation_cannot_be_written_into_operational_data(tmp_path):
         )
     with pytest.raises(DatasetIOError, match="evaluation/"):
         write_demo(demo, output=tmp_path / "data", evaluation_output=tmp_path / "truth.json")
+    assert not (tmp_path / "data").exists()
+
+
+def test_invalid_evaluation_parent_does_not_partially_write_runtime_files(tmp_path):
+    (tmp_path / "evaluation").write_text("existing file")
+    with pytest.raises(DatasetIOError, match="parent path"):
+        write_demo(
+            generate_demo(seed=42, as_of=AS_OF),
+            output=tmp_path / "data",
+            evaluation_output=tmp_path / "evaluation/truth.json",
+        )
     assert not (tmp_path / "data").exists()

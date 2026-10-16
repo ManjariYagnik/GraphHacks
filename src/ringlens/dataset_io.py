@@ -226,6 +226,8 @@ def write_outputs(outputs: dict[Path, bytes], *, overwrite: bool = False) -> Non
     """Check all output conflicts before writes; identical reruns preserve files."""
     pending = []
     for target, payload in outputs.items():
+        if any(parent.exists() and not parent.is_dir() for parent in target.parents):
+            raise DatasetIOError("An output parent path exists and is not a directory")
         if target.is_symlink():
             raise DatasetIOError("Refusing to replace a symbolic-link output")
         if target.exists():

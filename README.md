@@ -1,14 +1,17 @@
 # RingLens
 
-RingLens will investigate possible coordinated refund abuse by following accounts,
+RingLens investigates possible coordinated refund abuse by following accounts,
 orders, devices, addresses, and refunds in FalkorDB. FalkorDB is the authoritative
 runtime store and will determine which connections are discovered. All demo data
 will be synthetic.
 
 Phase 1 provides the Python package, configuration, graph connection, diagnostics,
 and local database setup. Phase 2 adds strict records, cross-record validation,
-the file contract, and additive schema initialization. Generation and ingestion
-remain deferred, along with scoring, orchestration, API servers, and dashboards.
+the file contract, and additive schema initialization. Phase 3 adds deterministic
+synthetic fixtures and file validation. Phase 4 adds validated, resumable FalkorDB
+ingestion and graph verification. Phase 5 adds two device expansions, evidence
+paths, and transparent v1 priority rules. Case persistence, reviewer memory,
+orchestration, the LLM, API servers, and dashboards remain deferred.
 
 ## Setup
 
@@ -53,7 +56,7 @@ commands exit 1 with guidance. Starting Docker requires a running Docker daemon.
 
 `schema init` creates missing ID/time indexes, waits for them to become operational,
 and can be rerun safely. It may create an empty graph but seeds no application or
-case records. Indexes do not enforce uniqueness; the future importer must enforce
+case records. Indexes do not enforce uniqueness; the importer enforces
 the documented rules. See [graph schema](docs/graph-schema.md) and
 [data contract](docs/data-contract.md) for validation, relationships, and hashing.
 Pure validation tests require neither a database nor a future generator.
@@ -66,6 +69,56 @@ The wrapper returns the client's `QueryResult`. Query deadlines default to 5,000
 and accept `timeout_ms=1..10000`; connection and socket deadlines are 3 and 12 seconds.
 Failed writes are not automatically retried; a lost connection or timeout can leave
 their outcome unknown.
+
+## Import and inspect
+
+Use the existing fixtures or generate them, then validate/import into the configured
+graph. No evaluation file is read during ingestion:
+
+```sh
+uv run ringlens data generate --seed 42 --as-of 2026-10-15T10:00:00Z --output data/demo --evaluation-output evaluation/demo_ground_truth.json
+uv run ringlens ingest --input data/demo/base --dry-run
+uv run ringlens ingest --input data/demo/base
+uv run ringlens graph verify
+uv run ringlens graph stats
+uv run ringlens graph paths --limit 5
+uv run ringlens ingest --input data/demo/new_evidence --dry-run
+uv run ringlens ingest --input data/demo/new_evidence
+uv run ringlens graph verify
+```
+
+Base counts are 50 accounts, 42 devices, 46 addresses, 250 orders, and 42 refunds;
+append increases refunds to 48 and advances the horizon to 2026-10-17 11:00 UTC.
+READY reimports are verified no-ops. Dry-run creates no graph state or indexes.
+Imports are resumable across queries; readers must require Dataset.status READY.
+Retry an unfinished batch with its original input. Run one writer per graph.
+
+Use `--graph NAME` on ingest, schema init, verify, stats, and paths for disposable
+graphs. See [ingestion](docs/ingestion.md) for validation, metadata, failure/retry,
+and genuine path query details. Ingestion preserves existing cases and reviews.
+
+## Investigate
+
+After a successful import, investigate a stored refund using graph relationships:
+
+```sh
+uv run ringlens investigate --refund-id REFUND_ID
+uv run ringlens investigate --refund-id REFUND_ID --format json
+uv run ringlens investigate --refund-id REFUND_ID --window-days 30 --as-of 2026-10-15T10:00:00Z
+```
+
+The default assessment time is the READY Dataset's imported horizon. Two device
+expansions find candidate accounts; addresses provide supporting evidence.
+Results include actual paths, deduplicated source records, deterministic evidence
+IDs, and the five explicit v1 rule contributions. Priority is for demonstration,
+not a probability or proof of abuse. No cases, evidence nodes, or reviews are written.
+
+Use `--graph NAME` for disposable graphs. `--max-accounts` (100) and
+`--max-evidence` (2000 distinct paths, also a per-query row bound) limit work.
+Truncation or a failed query returns INCOMPLETE without a score/priority and exits 3;
+missing/non-READY data exits 1 and invalid inputs exit 2.
+See the human-only [investigation guide](docs/investigation.md) for actual generated
+refund IDs, observed scenario results, rule definitions, and Phase 6 persistence notes.
 
 ## Durability and shutdown
 
@@ -106,7 +159,22 @@ uv run ruff format --check .
 uv run pytest
 uv run pytest tests/integration --run-integration
 uv run pytest tests/integration --run-persistence
+uv run pytest tests/integration/test_ingest.py --run-integration
 ```
+
+Generate and validate the synthetic fixtures without a database:
+
+```sh
+uv run ringlens data generate --seed 42 --as-of 2026-10-15T10:00:00Z --output data/demo --evaluation-output evaluation/demo_ground_truth.json
+uv run ringlens data validate --input data/demo/base
+uv run ringlens data validate --input data/demo/new_evidence --base data/demo/base
+```
+
+Same inputs reproduce identical files; differing files require `--overwrite` or a
+new output path. Base has 50 accounts, 250 orders, and 42 refunds; the append adds
+six refunds only. The [human demo guide](docs/demo-scenarios.md) describes scenarios
+and starting refund IDs. It and `evaluation/` are excluded from Docker contexts;
+neither may become runtime agent input.
 
 Default pytest runs unit tests and skips database tests. Explicit integration runs
 fail if FalkorDB is unavailable. Each database test uses its own UUID-named graph,

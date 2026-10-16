@@ -5,6 +5,7 @@ must never be included in error messages: both can contain sensitive evidence.
 """
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Self, TypeVar
 
 from falkordb import FalkorDB
@@ -41,6 +42,10 @@ class GraphQueryError(GraphStoreError):
 
 class GraphUnavailableError(GraphStoreError):
     """FalkorDB commands are unavailable."""
+
+
+class GraphImportBusyError(GraphStoreError):
+    """Another writer holds the graph's import lease."""
 
 
 class GraphStore:
@@ -115,6 +120,26 @@ class GraphStore:
     def graph_exists(self) -> bool:
         """Check for the selected graph without creating it."""
         return self._graph.name in self._call(self._db.list_graphs)
+
+    @contextmanager
+    def import_lock(self):
+        """Fail-fast, renewable 120s lease in this FalkorDB instance, never used by dry-run.
+
+        This coordination key is transient; Dataset/ImportBatch remain the durable
+        import truth. The MVP supports one writer and does not promise concurrency.
+        """
+        lock = self._db.connection.lock(f"ringlens:import:{self._graph.name}", timeout=120)
+        if not self._call(lambda: lock.acquire(blocking=False)):
+            raise GraphImportBusyError("Another import holds this graph's lease; wait and retry.")
+        try:
+            yield lambda: self._call(lock.reacquire)
+        finally:
+            try:
+                self._call(lock.release)
+            except GraphStoreError:
+                # Do not hide an import failure with cleanup failure. The lease
+                # expires; a persisted LOADING batch still blocks other batches.
+                pass
 
     def check_health(self) -> None:
         """Read-only probes, including when the application graph does not exist."""
