@@ -10,6 +10,7 @@ from ringlens.graph_store import (
     GraphConnectionError,
     GraphUnavailableError,
 )
+from ringlens.schema import SchemaResult
 
 runner = CliRunner()
 
@@ -65,3 +66,28 @@ def test_doctor_success(monkeypatch):
     assert result.exit_code == 0
     assert "Doctor OK" in result.output
     factory.return_value.__enter__.return_value.check_health.assert_called_once()
+
+
+def test_schema_help_and_init(monkeypatch):
+    assert runner.invoke(app, ["schema", "--help"]).exit_code == 0
+    assert runner.invoke(app, ["schema", "init", "--help"]).exit_code == 0
+    monkeypatch.setattr("ringlens.cli.GraphStore", MagicMock())
+    initializer = MagicMock(return_value=SchemaResult(20, 0))
+    monkeypatch.setattr("ringlens.cli.initialize_schema", initializer)
+    result = runner.invoke(app, ["schema", "init"])
+    assert result.exit_code == 0
+    assert "No records seeded" in result.output
+    assert "do not enforce uniqueness" in result.output
+    initializer.assert_called_once()
+
+
+def test_schema_init_uses_readable_configuration_and_database_errors(monkeypatch):
+    monkeypatch.setenv("RINGLENS_FALKORDB_PORT", "invalid")
+    assert runner.invoke(app, ["schema", "init"]).exit_code == 2
+    monkeypatch.delenv("RINGLENS_FALKORDB_PORT")
+    monkeypatch.setattr(
+        "ringlens.cli.GraphStore", MagicMock(side_effect=GraphConnectionError("offline"))
+    )
+    result = runner.invoke(app, ["schema", "init"])
+    assert result.exit_code == 1
+    assert "Schema initialization failed" in result.output

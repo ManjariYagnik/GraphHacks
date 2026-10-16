@@ -49,6 +49,16 @@ def test_health_does_not_run_a_graph_query(connection):
     client.select_graph.return_value.ro_query.assert_not_called()
 
 
+def test_graph_existence_probe_does_not_create_a_graph(connection):
+    store, client, _ = connection
+    client.select_graph.return_value.name = "ringlens_demo"
+    client.list_graphs.return_value = []
+    assert store.graph_exists() is False
+    client.list_graphs.return_value = ["ringlens_demo"]
+    assert store.graph_exists() is True
+    client.select_graph.return_value.query.assert_not_called()
+
+
 @pytest.mark.parametrize("timeout", [0, -1, 10001, True, 1.5])
 def test_invalid_timeout_never_reaches_database(connection, timeout):
     store, client, _ = connection

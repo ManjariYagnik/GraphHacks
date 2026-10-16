@@ -112,6 +112,10 @@ class GraphStore:
                 "The FalkorDB client rejected the operation; check query and parameter types."
             ) from None
 
+    def graph_exists(self) -> bool:
+        """Check for the selected graph without creating it."""
+        return self._graph.name in self._call(self._db.list_graphs)
+
     def check_health(self) -> None:
         """Read-only probes, including when the application graph does not exist."""
         if not self._call(self._db.connection.ping):

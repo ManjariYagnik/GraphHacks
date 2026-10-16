@@ -11,3 +11,4 @@ build/
 dist/
 evaluation/
 **/evaluation/
+docs/demo-scenarios.md

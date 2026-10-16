@@ -6,8 +6,9 @@ runtime store and will determine which connections are discovered. All demo data
 will be synthetic.
 
 Phase 1 provides the Python package, configuration, graph connection, diagnostics,
-and local database setup. Schema, data generation, and ingestion belong to Phase 2.
-Scoring, agent orchestration, API servers, and dashboards are deferred.
+and local database setup. Phase 2 adds strict records, cross-record validation,
+the file contract, and additive schema initialization. Generation and ingestion
+remain deferred, along with scoring, orchestration, API servers, and dashboards.
 
 ## Setup
 
@@ -42,12 +43,20 @@ errors. Avoid sharing `docker compose config` output because Compose expands sec
 docker compose up -d --wait
 uv run ringlens --help
 uv run ringlens doctor
+uv run ringlens schema init
 ```
 
 Doctor validates settings and runs `PING`, `GRAPH.CONFIG GET TIMEOUT_DEFAULT`, and
 `GRAPH.LIST`. It does not create a graph and succeeds before ingestion has run.
 Invalid configuration exits 2; unavailable connectivity, authentication, or graph
 commands exit 1 with guidance. Starting Docker requires a running Docker daemon.
+
+`schema init` creates missing ID/time indexes, waits for them to become operational,
+and can be rerun safely. It may create an empty graph but seeds no application or
+case records. Indexes do not enforce uniqueness; the future importer must enforce
+the documented rules. See [graph schema](docs/graph-schema.md) and
+[data contract](docs/data-contract.md) for validation, relationships, and hashing.
+Pure validation tests require neither a database nor a future generator.
 
 `GraphStore` uses the [official FalkorDB Python client](https://github.com/FalkorDB/falkordb-py).
 Use `store.read(cypher, params={...})` or `store.write(cypher, params={...})` within
@@ -101,9 +110,11 @@ uv run pytest tests/integration --run-persistence
 
 Default pytest runs unit tests and skips database tests. Explicit integration runs
 fail if FalkorDB is unavailable. Each database test uses its own UUID-named graph,
-checks a parameterized marker round trip, and deletes only its own graph. The
-persistence option additionally restarts the local Compose database, checks its
-server identity changed and the marker survived, then cleans up its test graph.
+checks a parameterized marker round trip, and deletes only its own graph. Schema
+checks initialize twice, preserve existing test data, and verify the refund context
+path using a minimal disposable fixture. The persistence option additionally
+restarts the local Compose database, checks its server identity changed and the
+marker survived, then cleans up its test graph.
 It briefly interrupts all clients of that local service. Run it without concurrent
 database work. No test deletes the application graph or a volume.
 

@@ -1,4 +1,145 @@
-# Phase 1 implementation status
+# RingLens implementation status
+
+## Phase 2 — schema and validation
+
+Updated: 2026-10-16 (Asia/Kolkata).
+
+Phase 2 is complete. The user subsequently ran the Docker and database checks
+successfully; the live verification below resolves the initial environment blockers.
+
+Implemented the Phase 2 scope by extending Phase 1. No applicable `AGENTS.md` was
+found. The repository was clean at the start; existing configuration, wrapper,
+CLI, dependencies, lockfile, Docker setup, and test conventions were reused.
+
+### Files and behavior
+
+- `src/ringlens/models.py`: strict exact-field source models, future case models,
+  import metadata, and manifest models. Includes integer/range/INR validation,
+  finite scores/contributions, lifecycle/window checks, and validated JSON strings
+  for evidence. All records forbid extra fields. Source records cannot supply
+  `source_hash` or permanent account status.
+- `src/ringlens/validation.py`: separate duplicate/reference/ownership/time/amount/
+  cutoff checks, base-batch count validation, canonical JSONL row serialization,
+  source hashes, and non-circular manifest content hashes. This is pure validation,
+  not a generator, file reader, importer, or substitute runtime store.
+- `src/ringlens/schema.py`: fixed ten-label/ten-relationship vocabulary, source
+  property projection including importer-managed hashes, twenty ID/time range
+  indexes, additive initialization with catalog checks and bounded readiness
+  polling, and a parameterized refund context query.
+- `src/ringlens/graph_store.py`: added read-only graph existence probing through
+  the official client. `cli.py`: reused settings/error handling for the new
+  `ringlens schema init` command.
+- `docs/graph-schema.md`, `docs/data-contract.md`, and `README.md`: document source
+  fields versus graph properties/edges, future case memory, exact file metadata,
+  canonical bytes/hash preimages, and importer validation/replay obligations.
+- Added model, cross-record, hashing, and schema unit tests; extended CLI/wrapper
+  tests and disposable-graph integration tests for repeated initialization,
+  preservation of a preexisting marker, empty initialization, and refund traversal.
+
+### Decisions and verified source behavior
+
+- Source timestamps/amounts use strict 64-bit integers. Address labels use the
+  explicit invented-placeholder form `Synthetic address <token>`. Case IDs use
+  `inv_`, `ev_`, `rev_`; source IDs retain the requested five prefixes.
+- Source JSON contains only application fields. Foreign keys become edges, but
+  remain part of the immutable row's SHA-256. `source_hash` is importer-managed.
+- File paths are exactly the five requested filenames. Files are ordered by kind
+  in the manifest and rows by ID within each file. A batch content hash covers
+  canonical manifest metadata excluding `batch_id`; its ID is `batch_` plus that
+  hash. Record/file hashing includes JSONL LF bytes; the descriptor preimage does
+  not. The contracts spell out both byte sequences.
+- Reviewed the pinned v4.20.7 [index creation tests](https://github.com/FalkorDB/FalkorDB/blob/v4.20.7/tests/flow/test_index_create.py),
+  [index catalog source](https://github.com/FalkorDB/FalkorDB/blob/v4.20.7/src/procedures/proc_list_indexes.c),
+  [constraint helpers](https://github.com/FalkorDB/FalkorDB/blob/v4.20.7/tests/flow/constraint_utils.py),
+  and [property type definitions](https://github.com/FalkorDB/FalkorDB/blob/v4.20.7/src/value.h).
+  Also checked the official [indexing](https://docs.falkordb.com/cypher/indexing)
+  and [data type](https://docs.falkordb.com/datatypes) documentation. Approved curl
+  reads were used where web extraction could not retrieve the versioned source.
+- The catalog uses a per-property `types` map and `NODE`/`RELATIONSHIP` entity
+  types. Initialization checks range indexes specifically and waits for
+  `OPERATIONAL`. It does not assume Neo4j syntax or `IF NOT EXISTS` behavior.
+- Native `UNIQUE`/`MANDATORY` constraints exist in the pinned source, but **none are
+  installed in Phase 2**. Indexes are not uniqueness enforcement. Single-writer
+  importer validation against existing graph state remains mandatory, including
+  one dataset per graph, ID/hash conflicts, and edge cardinalities. Live constraint
+  enforcement has not been verified and is not claimed.
+- Only supported scalar/array properties are used. Nested evidence details are a
+  validated JSON string, not a nested dictionary property. Case outcomes do not
+  add or establish an account status.
+
+### Initial implementation verification commands and outcomes
+
+The existing local `.venv` and ignored workspace uv toolchain were reused. No new
+dependencies or lockfile changes were needed. `uv` commands can use the toolchain
+environment shown in the Phase 1 history below; `.venv/bin/...` commands run directly.
+
+| Command | Outcome |
+| --- | --- |
+| `.venv/bin/pytest` | 156 passed; 4 real-database tests skipped by default |
+| `.venv/bin/ruff check .` | Passed |
+| `.venv/bin/ruff format --check .` | Passed after formatting |
+| `.venv/bin/python -c 'from ringlens.models import Account, Device, Address, Order, Refund, Investigation, Evidence, Review, Dataset, ImportBatch, Manifest'` | All Phase 2 models imported |
+| `.venv/bin/ringlens --help` | Passed; includes schema subcommand |
+| `.venv/bin/ringlens schema init --help` | Passed |
+| `RINGLENS_FALKORDB_PORT=invalid .venv/bin/ringlens schema init` | Expected exit 2 with readable variable/type error |
+| `.venv/bin/ringlens schema init` | Exit 1 with actionable database connection error |
+| `uv lock --check --offline` | Passed with local toolchain/cache paths |
+| `git diff --check` | Passed |
+| `.venv/bin/pytest tests/integration/test_falkordb.py --run-integration -k 'schema_init or refund_context' --tb=short` | Both selected tests failed during connection setup; no test graph created |
+| `command -v docker` | Docker unavailable on PATH |
+
+The integration attempt was repeated with approved network sandbox escalation
+after a local socket probe returned EPERM. FalkorDB remained unreachable outside
+the sandbox. The database failure is not counted as a successful integration check.
+
+### Live database verification — user-reported success
+
+After installing/starting Docker and configuring `.env`, the user supplied terminal
+output showing the pinned image pulled, container healthy, doctor successful,
+schema initialization successful twice, and all four integration tests passing.
+These results were run by the user, not independently rerun by the coding agent.
+
+| Command | User-reported outcome |
+| --- | --- |
+| `docker compose up -d --wait` | Image pulled; network and named volume created; container healthy |
+| `.venv/bin/ringlens doctor` | Configuration valid, database reachable, FalkorDB commands available |
+| `.venv/bin/ringlens schema init` (first run) | 20 indexes created, 0 already present; no records seeded |
+| `.venv/bin/ringlens schema init` (second run) | 0 indexes created, 20 already present; no records seeded |
+| `.venv/bin/pytest tests/integration --run-persistence` | All 4 tests passed in 0.43 seconds |
+
+The passing integration suite verifies parameterized marker writes/reads,
+server-enforced read-only queries, empty and repeatable schema initialization on a
+disposable graph, preservation of existing test data, the unambiguous refund
+context path, and cleanup of the owned test graphs. The persistence test verifies
+AOF enabled with `everysec` fsync at the expected data directory, a changed server
+identity after restart, and survival of its marker across that orderly restart.
+This resolves the required Phase 1 startup/persistence and Phase 2 live schema
+checks. It does not establish power-loss durability or backup recovery.
+
+Native constraints remain source-verified only and deliberately not enabled;
+indexes do not enforce uniqueness. Importer validation obligations remain as
+documented. There are no remaining database blockers for the Phase 2 scope.
+
+Commands for repeating the verification:
+
+```sh
+uv sync --locked
+docker compose up -d --wait
+uv run ringlens doctor
+uv run ringlens schema init
+uv run ringlens schema init
+uv run pytest tests/integration --run-persistence
+```
+
+The integration suite owns UUID-named graphs and deletes only those graphs. No
+application graph or named volume was deleted during Phase 2. Schema initialization
+may create an empty graph and indexes, but never creates application, case, or
+metadata records. Future work is generation and ingestion following the contracts;
+full data, scoring, orchestration, API/dashboard work, and the LLM are not implemented.
+
+---
+
+## Phase 1 historical handoff
 
 Updated: 2026-10-15 (Asia/Kolkata).
 
@@ -102,6 +243,10 @@ tools, virtual environments, caches, distributions, and credentials are ignored.
 Staged content is checked with `git diff --cached --check` before committing.
 
 ## Blockers and checks still required
+
+Historical note: the startup, doctor, graph, cleanup, and restart-persistence
+blockers below were subsequently resolved by the user's successful live
+verification recorded in the Phase 2 section above.
 
 Docker CLI/Desktop is absent (`command -v docker` found nothing; expected binary
 paths and `/Applications/Docker.app` were absent). No running FalkorDB endpoint was
