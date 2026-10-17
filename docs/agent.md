@@ -1,6 +1,6 @@
 # Tool-calling investigation agent
 
-One OpenAI Responses adapter uses native structured function calling. The LLM
+OpenAI Responses and Anthropic Messages adapters use native structured tool calling. The LLM
 selects among five typed tools; existing FalkorDB traversals, deterministic scoring,
 review comparison, and case policy remain authoritative. Runtime never reads
 fixture/evaluation files. This human guide is excluded from runtime build contexts.
@@ -10,19 +10,43 @@ fixture/evaluation files. This human guide is excluded from runtime build contex
 Install the updated lockfile with `uv sync --locked`. In the ignored `.env`, set:
 
 ```dotenv
-RINGLENS_OPENAI_API_KEY=
-RINGLENS_AGENT_MODEL=
+RINGLENS_AGENT_PROVIDER=anthropic
+RINGLENS_ANTHROPIC_API_KEY=
+RINGLENS_AGENT_MODEL=claude-sonnet-4-6
 RINGLENS_AGENT_TIMEOUT_SECONDS=30
 RINGLENS_AGENT_MAX_TURNS=8
 RINGLENS_AGENT_MAX_TOOL_CALLS=16
 ```
 
-Use a real API key and an available Responses/tool-calling model name from your
-provider account. There is deliberately no assumed default model. OPENAI_API_KEY
-is accepted as a fallback; RINGLENS_OPENAI_API_KEY takes precedence when set.
+Use a real Anthropic API key and a tool-calling Claude model available to your
+account. ANTHROPIC_API_KEY is accepted as a fallback; the project-specific key
+wins when nonempty. The example uses the documented Sonnet 4.6 model ID; there is
+no model default in code. OpenAI API credits are unnecessary for anthropic mode.
+Only the selected provider is called, with no automatic paid-provider fallback.
+
+To keep using OpenAI, use `RINGLENS_AGENT_PROVIDER=openai` (the backward-compatible
+default), `RINGLENS_OPENAI_API_KEY` or OPENAI_API_KEY, and an available Responses
+model in RINGLENS_AGENT_MODEL. Do not leave an OpenAI model ID selected when
+switching to Anthropic. Existing graph data, cases, reviews, and CLI messages need
+no migration. `uv sync --locked` installs both official provider SDKs.
+
 Never commit or share `.env`. Missing credentials/model fail clearly before a
 provider call or graph run is created. SDK failures omit raw provider errors and
 keys. Database credentials retain their existing secret handling.
+
+Anthropic is locked at **0.125.0**. Its adapter follows the official
+[Python SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python),
+[tool-call handling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls),
+[strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use),
+and [parallel tool control](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use)
+documentation checked on 2026-10-17. It preserves native assistant content blocks,
+returns matching tool_result IDs immediately afterward, marks tool errors, requests
+serial tool use, and rejects truncated/refused responses before executing their
+calls. Timeout and one SDK transport retry match the OpenAI adapter. The SDK's
+transform_schema removes unsupported grammar constraints from the sent schema;
+the original strict Pydantic validators still enforce every input constraint at
+the application boundary. No reasoning blocks are saved in audit. Model/account
+availability and live Claude calls remain unverified until credentials are provided.
 
 The official SDK is locked at **openai 2.54.0**. Implementation follows the official
 [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling)
@@ -150,17 +174,20 @@ API authentication, background workers, or concurrency guarantee.
 
 Offline SDK HTTP tests use a fake transport; orchestration tests use deterministic
 ProviderTurn mocks while graph tools execute against real disposable FalkorDB.
-They are **not live provider verification**. This workspace has no configured API
-key or model, so a live request was unavailable. The adapter and CLI are implemented;
-provider/model/account compatibility must be confirmed after configuration:
+They are **not live provider verification**. The user supplied output of a successful
+OpenAI read-only run (run_24e446e28ee2402aa8a3c9eb759ace56), with household score
+35 LOW. The user subsequently requested Claude because of available Anthropic
+credits. No Anthropic key is configured locally; no live Claude request was made.
+Provider/model/account compatibility must be confirmed after configuration:
 
 ```sh
-uv run pytest tests/unit/test_agent_provider.py
+uv run pytest tests/unit/test_agent_provider.py tests/unit/test_anthropic_provider.py
 uv run pytest tests/integration/test_reviews.py tests/integration/test_agent.py --run-integration
 uv run pytest tests/integration/test_agent_live.py --run-integration --run-live-agent
 ```
 
-The last command performs one live read-only smoke only with credentials/model
+The last command uses RINGLENS_AGENT_PROVIDER and performs one live read-only smoke
+only with the selected provider's credentials/model
 present; otherwise it explicitly skips. It may incur provider charges and cleans
 up only its own uniquely named test graph. The application graph/volume are never
 reset by these tests. See implementation-status for final actual test totals.

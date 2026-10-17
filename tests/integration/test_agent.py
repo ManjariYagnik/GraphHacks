@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+import anthropic
+import httpx
 import pytest
 
 from ringlens.agent import get_agent_run, run_agent
-from ringlens.agent_provider import AgentSettings, ProviderError, ProviderTurn
+from ringlens.agent_provider import AgentSettings, ProviderError, ProviderTurn, create_provider
 from ringlens.agent_tools import AgentTools
 from ringlens.cases import apply_case_policy, get_case
 from ringlens.config import Settings
@@ -146,6 +148,80 @@ def test_real_tools_and_grounded_case_actions_repeat_and_lookup(graph):
     assert explained.status == "COMPLETE", explained.errors
     assert "Historical snapshot" in explained.response
     assert case_id in explained.references
+
+
+@pytest.mark.parametrize("mode", ["assess", "investigate"])
+def test_claude_sdk_mock_http_drives_real_graph_tools(graph, monkeypatch, mode):
+    """The actual Anthropic SDK calls real services; only the remote HTTP is mocked."""
+    store, _ = graph
+    ref, steps = None, []
+
+    def handler(request):
+        nonlocal ref
+        body = json.loads(request.content)
+        outputs = [
+            json.loads(block["content"])
+            for msg in body["messages"]
+            if msg["role"] == "user" and isinstance(msg["content"], list)
+            for block in msg["content"]
+            if block["type"] == "tool_result"
+        ]
+        if not outputs:
+            name, args = "analyze_refund", {"refund_id": PATTERN, "as_of": None, "window_days": 30}
+        elif len(outputs) == 1:
+            ref = outputs[0]["data"]["assessment_reference"]
+            name, args = "get_review_context", {"assessment_reference": ref}
+        elif len(outputs) == 2 and mode == "investigate":
+            name, args = "apply_case_policy", {"assessment_reference": ref}
+        else:
+            name, args = None, None
+        steps.append(name)
+        content = (
+            [{"type": "tool_use", "id": f"toolu_{len(steps)}", "name": name, "input": args}]
+            if name
+            else [{"type": "text", "text": "Finished"}]
+        )
+        return httpx.Response(
+            200,
+            json={
+                "id": f"msg_{len(steps)}",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-test",
+                "content": content,
+                "stop_reason": "tool_use" if name else "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 10},
+            },
+        )
+
+    client = anthropic.Anthropic(
+        api_key="fake-key",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: client)
+    settings = AgentSettings(
+        _env_file=None,
+        agent_provider="anthropic",
+        RINGLENS_ANTHROPIC_API_KEY="fake-key",
+        agent_model="claude-test",
+    )
+    provider = create_provider(settings)
+    try:
+        result = run_agent(
+            store, "Investigate the refund", mode=mode, provider=provider, settings=settings
+        )
+    finally:
+        provider.close()
+    assert result.status == "COMPLETE", result.errors
+    assert "score=90" in result.response
+    assert steps[:2] == ["analyze_refund", "get_review_context"]
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [
+        [1 if mode == "investigate" else 0]
+    ]
+    if mode == "investigate":
+        assert "Case action: CREATED" in result.response
 
 
 def test_assess_permissions_are_enforced_even_for_malicious_model(graph):

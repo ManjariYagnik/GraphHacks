@@ -1,5 +1,88 @@
 # RingLens implementation status
 
+## Claude provider support
+
+Updated: 2026-10-17 (Asia/Kolkata).
+
+Added explicit `RINGLENS_AGENT_PROVIDER=anthropic` support using the official
+Anthropic Python SDK, locked at **0.125.0**. The default stays openai for existing
+setups. No automatic provider fallback occurs. Claude uses the same five domain
+tools, native tool calling, modes, graph investigation, scoring, scoped memory,
+case policy, completion/revision checks, and grounded final rendering.
+
+Inspected applicable instructions (no AGENTS.md found), README/status, provider,
+runner, CLI, settings/lockfile, and existing unit/integration tests. The 276-test
+unit baseline passed before code changes. Earlier milestone changes were already
+staged; their staging/work was preserved, with no commit or .env change.
+
+Verified current official Anthropic documentation before implementing:
+[SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python),
+[client tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls),
+[strict tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use),
+[serial control](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use),
+and [JSON schema transformation](https://platform.claude.com/docs/en/build-with-claude/structured-outputs).
+The adapter translates native tool_use blocks into the runner's existing call
+format and sends each matching tool_result in the following user message.
+Consecutive results are grouped, errors marked, native assistant blocks preserved,
+and incomplete/refused replies rejected. Unsupported grammar constraints are
+transformed with the official SDK; full strict arguments remain validated locally.
+Transport timeout and one retry are preserved. Credentials/raw provider errors
+never enter responses/audit. Case/review/scoring/ingestion/schema code is unchanged.
+
+Files: src/ringlens/agent_provider.py adds secret Anthropic settings, provider
+selection/factory and adapter; cli.py delegates to the factory. pyproject.toml and
+uv.lock add Anthropic plus docstring-parser (38 total locked packages).
+.env.example, README and docs/agent.md describe both providers. New
+unit/test_anthropic_provider.py covers real SDK/mock HTTP native continuation,
+strict-schema transformation, stop reasons, redaction, no fallback, configuration,
+and error result grouping. integration/test_agent.py adds two real SDK/mock HTTP +
+real FalkorDB workflows (assess creates no case; investigate creates a genuine case).
+The opt-in live test now uses the selected provider; existing offline OpenAI tests
+explicitly select openai so they cannot accidentally consult a Claude key.
+
+Commands/outcomes:
+
+- `uv add 'anthropic>=0.75,<1'`: installed 0.125.0 with approved network access;
+  lower bound subsequently set to 0.125, the tested version exposing transform_schema.
+- `uv lock --offline` and `uv lock --check --offline`: passed.
+- `.venv/bin/pytest tests/unit/test_agent_provider.py tests/unit/test_anthropic_provider.py -q --tb=short`:
+  **23 passed** (13 existing + 10 new).
+- `.venv/bin/pytest --run-integration -q --tb=short`:
+  **374 passed, 2 skipped in 23.38 seconds** (live provider and explicit restart test).
+  This covers all 286 unit and 88 real-database tests. No volume restart was needed
+  for a provider-only change; earlier milestone restart persistence remains recorded below.
+- `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`: passed, 56 files.
+- Key-presence-only check: Claude key absent; selected provider currently openai.
+  No secrets were printed and no live provider credits were spent.
+
+User-supplied logs separately confirm a successful live **OpenAI** read-only run,
+run_24e446e28ee2402aa8a3c9eb759ace56, score 35 LOW. That does not verify Claude.
+The Anthropic SDK tests use mocked HTTP, while graph services are real. Live Claude
+compatibility remains unverified until the user configures their key/model.
+
+Set these in ignored .env (leave database settings intact):
+
+```dotenv
+RINGLENS_AGENT_PROVIDER=anthropic
+RINGLENS_ANTHROPIC_API_KEY=your-anthropic-api-key
+RINGLENS_AGENT_MODEL=claude-sonnet-4-6
+```
+
+ANTHROPIC_API_KEY is also accepted. Use a model available to the account; no model
+is assumed by code. Then:
+
+```sh
+uv sync --locked
+uv run ringlens agent run --message "Explain refund ref_4d44e5cc3e0a8dae77fd" --mode assess
+# Optional dedicated live smoke on an owned disposable graph:
+uv run pytest tests/integration/test_agent_live.py --run-integration --run-live-agent
+```
+
+If uv is not on PATH, use the local exports documented below. No OpenAI credits
+are required when anthropic is selected; no graph/schema migration is required.
+
+---
+
 ## Persistent reviewer memory and tool-calling agent milestone
 
 Updated: 2026-10-17 (Asia/Kolkata).

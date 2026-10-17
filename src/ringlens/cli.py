@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
 from ringlens.agent import get_agent_run, run_agent
-from ringlens.agent_provider import AgentSettings, OpenAIProvider, ProviderError
+from ringlens.agent_provider import AgentSettings, ProviderError, create_provider
 from ringlens.case_models import CaseAction
 from ringlens.cases import apply_case_policy, get_case, list_cases
 from ringlens.config import Settings
@@ -456,7 +456,7 @@ def agent_run_command(
     """Use the real configured provider. Human review mutation is never a tool."""
     try:
         settings = AgentSettings()
-        provider = OpenAIProvider(settings)
+        provider = create_provider(settings)
         try:
             with GraphStore(_load_settings(graph)) as store:
                 result = run_agent(store, message, mode=mode, provider=provider, settings=settings)

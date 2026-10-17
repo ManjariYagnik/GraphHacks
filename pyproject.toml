@@ -9,6 +9,7 @@ description = "Graph-backed refund abuse investigation foundation using FalkorDB
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "anthropic>=0.125,<1",
     "falkordb>=1.8,<2",
     "openai>=2,<3",
     "pydantic>=2.10,<3",

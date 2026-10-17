@@ -18,6 +18,7 @@ from ringlens.reviews import _scope_covers
 
 
 def test_missing_credentials_model_and_secret_hiding(monkeypatch):
+    monkeypatch.setenv("RINGLENS_AGENT_PROVIDER", "openai")
     monkeypatch.delenv("RINGLENS_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("RINGLENS_AGENT_MODEL", raising=False)

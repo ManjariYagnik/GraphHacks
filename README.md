@@ -13,7 +13,7 @@ ingestion and graph verification. Phase 5 adds two device expansions, evidence
 paths, and transparent v1 priority rules. The case milestone adds explicit case
 creation, immutable assessment history, duplicate prevention, and saved-case readers.
 The current milestone adds persistent scoped human reviews and a native tool-calling
-OpenAI agent. API servers and the dashboard remain deferred.
+OpenAI or Claude agent. API servers and the dashboard remain deferred.
 
 ## Setup
 
@@ -157,10 +157,24 @@ explanation applies only to reviewed facts. Scores remain unchanged. New househo
 bursts after append remain unexplained and qualify for case creation. See the
 [review guide](docs/reviews.md) for the fresh-graph sequence and closure/reopen policy.
 
-To enable the real agent, set `RINGLENS_OPENAI_API_KEY` (or `OPENAI_API_KEY`) and
-`RINGLENS_AGENT_MODEL` in the ignored `.env`, then `uv sync --locked`. No model is
-assumed. The official OpenAI SDK uses Responses native structured tool calls.
-Missing configuration fails clearly before a provider request.
+To use Claude API credits, set these values in your ignored `.env`, then run
+`uv sync --locked`:
+
+```dotenv
+RINGLENS_AGENT_PROVIDER=anthropic
+RINGLENS_ANTHROPIC_API_KEY=your-anthropic-api-key
+RINGLENS_AGENT_MODEL=claude-sonnet-4-6
+```
+
+Use a tool-calling Claude model available in your Anthropic account. The official
+Anthropic SDK uses native Messages tool_use/tool_result calls. ANTHROPIC_API_KEY
+is accepted as a fallback for the key. Only the selected provider is called;
+OpenAI credentials/credits are unnecessary when using anthropic.
+
+Existing OpenAI setups continue to work with `RINGLENS_AGENT_PROVIDER=openai`
+(the default), `RINGLENS_OPENAI_API_KEY` (or `OPENAI_API_KEY`), and a corresponding
+Responses model in `RINGLENS_AGENT_MODEL`. There is no assumed model or automatic
+fallback between providers. Missing configuration fails before a provider request.
 
 ```sh
 uv run ringlens agent run --message "Explain refund ref_2b42ec18e21a70bdfa15" --mode assess
@@ -175,7 +189,8 @@ are never an agent tool. Grounded final responses name confirmed evidence, sourc
 reviews and case actions. Fresh sessions retrieve memory from FalkorDB. The
 [agent guide](docs/agent.md) documents tools, bounds, credentials, setup and the
 initial-review/restart/append demonstration. Provider mocks exercise orchestration;
-this workspace has no credentials/model, so live provider behavior remains unverified.
+the user has verified an OpenAI read-only run. Claude SDK/orchestration are tested
+with mocked HTTP and real graph tools; live Claude behavior awaits key configuration.
 
 ## Durability and shutdown
 
