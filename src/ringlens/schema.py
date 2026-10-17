@@ -19,6 +19,7 @@ LABELS = (
     "Dataset",
     "ImportBatch",
     "Assessment",
+    "AgentRun",
 )
 RELATIONSHIPS = (
     ("Account", "PLACED", "Order"),
@@ -35,6 +36,8 @@ RELATIONSHIPS = (
     ("Investigation", "LATEST_ASSESSMENT", "Assessment"),
     ("Assessment", "HAS_EVIDENCE", "Evidence"),
     ("Investigation", "OVERLAPS", "Investigation"),
+    ("Review", "REVIEWS_ASSESSMENT", "Assessment"),
+    ("Review", "SUPERSEDES", "Review"),
 )
 RELATIONSHIP_TYPES = frozenset(relation for _, relation, _ in RELATIONSHIPS)
 
@@ -62,6 +65,10 @@ INDEXES = tuple((label, "id") for label in LABELS) + (
     ("Assessment", "window_end"),
     ("Assessment", "created_at"),
     ("Assessment", "input_revision"),
+    ("Review", "reviewer_id"),
+    ("Review", "dataset_id"),
+    ("Review", "publication_status"),
+    ("AgentRun", "started_at"),
 )
 INDEX_CATALOG_QUERY = (
     "CALL db.indexes() YIELD label, types, entitytype, status "

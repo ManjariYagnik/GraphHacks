@@ -5,6 +5,10 @@ HISTORY = """
 MATCH (i:Investigation {id: $case_id})-[link:HAS_ASSESSMENT]->(a:Assessment)
 RETURN properties(a), id(link) ORDER BY a.created_at, a.id
 """
+PENDING_ATTACHMENTS = """
+MATCH (i:Investigation {id: $case_id})-[link:HAS_ASSESSMENT]->(a:Assessment)
+WHERE link.publication_status = 'LOADING' RETURN a.id
+"""
 MEMBERS = """
 MATCH (i:Investigation {id: $case_id})-[link:INCLUDES]->(a:Account)
 RETURN a.id, id(link) ORDER BY a.id
@@ -14,8 +18,9 @@ MATCH (i:Investigation {id: $case_id})-[link:LATEST_ASSESSMENT]->(a:Assessment)
 RETURN a.id, a.status, id(link)
 """
 EVIDENCE_FOR_HISTORY = """
-MATCH (i:Investigation {id: $case_id})-[:HAS_ASSESSMENT]->(a:Assessment {status: 'READY'})
+MATCH (i:Investigation {id: $case_id})-[h:HAS_ASSESSMENT]->(a:Assessment {status: 'READY'})
       -[link:HAS_EVIDENCE]->(e:Evidence)
+WHERE coalesce(h.publication_status, 'READY') = 'READY'
 RETURN a.id, properties(e), id(link) ORDER BY a.id, e.id
 """
 COMPATIBLE_EVIDENCE = """
@@ -53,7 +58,7 @@ EXISTING_ASSESSMENT = "MATCH (a:Assessment {id: $assessment_id}) RETURN properti
 START = """
 MERGE (i:Investigation {id: $case_id}) ON CREATE SET i += $case_properties
 MERGE (a:Assessment {id: $assessment_id}) ON CREATE SET a += $assessment_properties
-MERGE (i)-[:HAS_ASSESSMENT]->(a)
+MERGE (i)-[h:HAS_ASSESSMENT]->(a) ON CREATE SET h.publication_status = 'LOADING'
 RETURN count(a)
 """
 INCLUDE = """
@@ -82,32 +87,34 @@ RETURN other.id, id(link) ORDER BY other.id
 """
 
 # Final publication is one query after endpoint/content checks. The evidence
-# variant has a required match BEFORE any publication, and both preserve status.
+# variant matches evidence before publication; status changes only for policy reopening.
 PUBLISH_START = """
 MATCH (d:Dataset {id: $dataset_id}),
-      (i:Investigation {id: $case_id})-[:HAS_ASSESSMENT]->(a:Assessment {id: $assessment_id})
-WHERE d.status = 'READY' AND d.as_of = $horizon AND a.status = 'LOADING'
+      (i:Investigation {id: $case_id})-[h:HAS_ASSESSMENT]->(a:Assessment {id: $assessment_id})
+WHERE d.status = 'READY' AND d.as_of = $horizon AND a.status IN ['LOADING', 'READY']
   AND a.analytical_hash = $analytical_hash AND i.group_key = $group_key
 """
 PUBLISH_EVIDENCE = """
 MATCH (a)-[:HAS_EVIDENCE]->(e:Evidence)
 MERGE (i)-[:HAS_EVIDENCE]->(e)
-WITH DISTINCT i, a
+WITH DISTINCT i, a, h
 """
 PUBLISH_END = """
 OPTIONAL MATCH (i)-[old:LATEST_ASSESSMENT]->(:Assessment)
 DELETE old
-WITH i, a
+WITH i, a, h
 MERGE (i)-[:LATEST_ASSESSMENT]->(a)
-SET a.status = 'READY', a.completed_at = $completed_at,
+SET a.status = 'READY', a.completed_at = coalesce(a.completed_at, $completed_at),
+    h.publication_status = 'READY',
     i.publication_status = 'READY', i.latest_assessment_id = a.id,
     i.priority = a.priority, i.score = a.score, i.rule_version = a.rule_version,
     i.assessment_as_of = a.window_end, i.updated_at = $completed_at,
-    i.requires_review = i.requires_review OR i.status = 'CLOSED' OR $has_overlaps
+    i.requires_review = i.requires_review OR i.status = 'CLOSED' OR $has_overlaps,
+    i.status = CASE WHEN $reopen THEN 'REOPENED' ELSE i.status END
 WITH i, a
 OPTIONAL MATCH (i)-[:OVERLAPS]-(other:Investigation)
 SET other.requires_review = true
 RETURN count(DISTINCT a)
 """
-PUBLISH = PUBLISH_START + " WITH i, a " + PUBLISH_END
+PUBLISH = PUBLISH_START + " WITH i, a, h " + PUBLISH_END
 PUBLISH_WITH_EVIDENCE = PUBLISH_START + PUBLISH_EVIDENCE + PUBLISH_END

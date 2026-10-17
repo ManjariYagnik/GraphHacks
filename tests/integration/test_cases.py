@@ -372,7 +372,7 @@ def test_changed_group_overlap_flags_both_cases_without_membership_merge(graph, 
 
 def test_additive_schema_twice_and_cli_round_trip(graph, truth):
     store, settings = graph
-    assert initialize_schema(store).created_indexes == len(INDEXES) == 25
+    assert initialize_schema(store).created_indexes == len(INDEXES) == 30
     assert initialize_schema(store).created_indexes == 0
     ingest_directory(store, BASE)
     runner = CliRunner()
@@ -558,12 +558,19 @@ def test_list_display_caps_and_error_case_cli_actions(graph, truth):
     assert json.loads(missing.output)["case_action"]["action"] == "NOT_CREATED_INCOMPLETE"
 
 
-def test_schema_adds_only_five_indexes_and_preserves_existing_records(graph):
+def test_schema_adds_indexes_and_preserves_existing_records(graph):
     store, _ = graph
     old_indexes = [
         index
         for index in INDEXES
-        if index[0] != "Assessment" and index != ("Investigation", "group_key")
+        if index[0] not in {"Assessment", "AgentRun"}
+        and index != ("Investigation", "group_key")
+        and index
+        not in {
+            ("Review", "reviewer_id"),
+            ("Review", "dataset_id"),
+            ("Review", "publication_status"),
+        }
     ]
     assert len(old_indexes) == 20
     for label, field in old_indexes:
@@ -571,7 +578,7 @@ def test_schema_adds_only_five_indexes_and_preserves_existing_records(graph):
     ingest_directory(store, BASE)
     before = image(store)
     initialized = initialize_schema(store)
-    assert initialized.created_indexes == 5 and initialized.existing_indexes == 20
+    assert initialized.created_indexes == 10 and initialized.existing_indexes == 20
     assert initialize_schema(store).created_indexes == 0
     assert image(store) == before
 

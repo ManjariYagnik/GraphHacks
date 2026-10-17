@@ -4,6 +4,9 @@ import pytest
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-live-agent", action="store_true", help="Use configured paid LLM provider"
+    )
     parser.addoption("--run-integration", action="store_true", help="Test against real FalkorDB")
     parser.addoption(
         "--run-persistence", action="store_true", help="Also restart the local Compose database"
@@ -12,7 +15,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     for item in items:
-        if "persistence" in item.keywords and not config.getoption("--run-persistence"):
+        if "live_agent" in item.keywords and not config.getoption("--run-live-agent"):
+            item.add_marker(
+                pytest.mark.skip(reason="requires --run-live-agent and provider credentials")
+            )
+        elif "persistence" in item.keywords and not config.getoption("--run-persistence"):
             item.add_marker(
                 pytest.mark.skip(reason="requires --run-persistence (restarts database)")
             )

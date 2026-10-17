@@ -367,6 +367,7 @@ def graph_stats(store: GraphStore) -> dict:
             "Evidence",
             "Review",
             "Assessment",
+            "AgentRun",
         ):
             count, distinct = store.read(
                 f"MATCH (n:{label}) RETURN count(n), count(DISTINCT n.id)"

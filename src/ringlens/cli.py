@@ -9,6 +9,8 @@ import typer
 from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
+from ringlens.agent import get_agent_run, run_agent
+from ringlens.agent_provider import AgentSettings, OpenAIProvider, ProviderError
 from ringlens.case_models import CaseAction
 from ringlens.cases import apply_case_policy, get_case, list_cases
 from ringlens.config import Settings
@@ -39,6 +41,14 @@ cases_app = typer.Typer(
     help="Read published cases and immutable assessments.", no_args_is_help=True
 )
 app.add_typer(cases_app, name="cases")
+reviews_app = typer.Typer(
+    help="Explicit human review writes and append-only history.", no_args_is_help=True
+)
+app.add_typer(reviews_app, name="reviews")
+agent_app = typer.Typer(
+    help="Bounded tool-calling agent with graph-backed review memory.", no_args_is_help=True
+)
+app.add_typer(agent_app, name="agent")
 
 
 @app.callback()
@@ -344,3 +354,135 @@ def cases_show_command(
             f"Overlapping cases: {result.overlapping_case_ids}; "
             f"pending assessments: {len(result.pending_assessment_ids)}"
         )
+
+
+@reviews_app.command("record")
+def review_record_command(
+    refund_id: Annotated[str, typer.Option("--refund-id")],
+    reviewer_id: Annotated[str, typer.Option("--reviewer-id")],
+    outcome: Annotated[
+        Literal["BENIGN_EXPLANATION", "NEEDS_MORE_INFORMATION", "CONFIRMED_ABUSE"],
+        typer.Option("--outcome"),
+    ],
+    explanation: Annotated[str, typer.Option("--explanation")],
+    rule: Annotated[list[str] | None, typer.Option("--rule")] = None,
+    source_id: Annotated[list[str] | None, typer.Option("--source-id")] = None,
+    all_evidence: Annotated[bool, typer.Option("--all-evidence")] = False,
+    case_id: Annotated[str | None, typer.Option("--case-id")] = None,
+    case_status: Annotated[
+        Literal["OPEN", "IN_REVIEW", "CLOSED", "REOPENED"] | None, typer.Option("--case-status")
+    ] = None,
+    supersedes: Annotated[str | None, typer.Option("--supersedes")] = None,
+    valid_until: Annotated[str | None, typer.Option("--valid-until")] = None,
+    as_of: Annotated[str | None, typer.Option("--as-of")] = None,
+    window_days: Annotated[int, typer.Option("--window-days", min=1, max=3650)] = 30,
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+) -> None:
+    """Record an explicitly human-scoped review; optionally change case status."""
+    from ringlens.review_models import ReviewRequest
+    from ringlens.reviews import record_review
+
+    try:
+        if not rule and not all_evidence:
+            raise ValueError("Select --rule (repeatable) or explicitly --all-evidence.")
+        request = ReviewRequest(
+            refund_id=refund_id,
+            reviewer_id=reviewer_id,
+            outcome=outcome,
+            explanation=explanation,
+            rule_ids=rule or [],
+            source_ids=source_id or [],
+            case_id=case_id,
+            case_status=case_status,
+            supersedes=supersedes,
+            valid_until=parse_as_of(valid_until) if valid_until else None,
+            as_of=parse_as_of(as_of) if as_of else None,
+            window_days=window_days,
+        )
+        with GraphStore(_load_settings(graph)) as store:
+            result = record_review(store, request)
+    except (ValueError, GraphStoreError) as error:
+        typer.echo(f"Review not recorded: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(result.model_dump_json(indent=2))
+
+
+@reviews_app.command("history")
+def review_history_command(
+    refund_id: Annotated[str | None, typer.Option("--refund-id")] = None,
+    case_id: Annotated[str | None, typer.Option("--case-id")] = None,
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+) -> None:
+    """Inspect full human history including superseded reviews; create no case."""
+    from ringlens.reviews import review_history
+
+    try:
+        with GraphStore(_load_settings(graph)) as store:
+            history = review_history(store)
+            if refund_id:
+                result = investigate(store, refund_id)
+                if result.completeness != "COMPLETE":
+                    raise ValueError("Refund context incomplete; history filter unavailable.")
+                accounts = {c.id for c in result.candidates}
+                history = [r for r in history if accounts.intersection(r.account_ids)]
+            if case_id:
+                case = get_case(store, case_id)
+                history = [
+                    r
+                    for r in history
+                    if r.case_id == case_id or set(r.account_ids).intersection(case.account_ids)
+                ]
+    except (ValueError, GraphStoreError) as error:
+        typer.echo(f"Review history unavailable: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        json.dumps(
+            {
+                "reviews": [r.model_dump(mode="json") for r in history[:100]],
+                "omitted_reviews": max(0, len(history) - 100),
+            },
+            indent=2,
+        )
+    )
+
+
+@agent_app.command("run")
+def agent_run_command(
+    message: Annotated[str, typer.Option("--message")],
+    mode: Annotated[Literal["assess", "investigate"], typer.Option("--mode")] = "assess",
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+    output_format: Annotated[Literal["text", "json"], typer.Option("--format")] = "text",
+) -> None:
+    """Use the real configured provider. Human review mutation is never a tool."""
+    try:
+        settings = AgentSettings()
+        provider = OpenAIProvider(settings)
+        try:
+            with GraphStore(_load_settings(graph)) as store:
+                result = run_agent(store, message, mode=mode, provider=provider, settings=settings)
+        finally:
+            provider.close()
+    except (ValueError, ProviderError, GraphStoreError) as error:
+        typer.echo(f"Agent unavailable: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        result.model_dump_json(indent=2)
+        if output_format == "json"
+        else f"Run {result.run_id}: {result.status}\n{result.response}"
+    )
+    if result.status != "COMPLETE":
+        raise typer.Exit(code=3)
+
+
+@agent_app.command("show-run")
+def agent_show_run_command(
+    run_id: Annotated[str, typer.Option("--run-id")],
+    graph: Annotated[str | None, typer.Option("--graph")] = None,
+) -> None:
+    try:
+        with GraphStore(_load_settings(graph)) as store:
+            result = get_agent_run(store, run_id)
+    except (ValueError, GraphStoreError) as error:
+        typer.echo(f"Agent run unavailable: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(json.dumps(result, indent=2))

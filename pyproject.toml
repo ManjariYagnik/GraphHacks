@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "falkordb>=1.8,<2",
+    "openai>=2,<3",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
     "redis>=8.1,<9",
@@ -32,6 +33,7 @@ include = ["/src", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
+    "live_agent: uses the real configured provider; requires --run-live-agent and database access",
     "integration: requires a real FalkorDB server; select with --run-integration",
     "persistence: restarts the local Compose service; select with --run-persistence",
 ]

@@ -75,7 +75,13 @@ class Assessment(StrictRecord):
 
 class CaseAction(StrictRecord):
     action: Literal[
-        "CREATED", "UPDATED", "EXISTING_UNCHANGED", "NO_CASE_REQUIRED", "NOT_CREATED_INCOMPLETE"
+        "CREATED",
+        "UPDATED",
+        "REOPENED",
+        "ALREADY_REVIEWED",
+        "EXISTING_UNCHANGED",
+        "NO_CASE_REQUIRED",
+        "NOT_CREATED_INCOMPLETE",
     ]
     case_id: CaseId | None = None
     assessment_id: AssessmentId | None = None

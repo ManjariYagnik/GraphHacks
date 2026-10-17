@@ -2,9 +2,9 @@
 
 The case milestone extends the existing graph investigation/scoring services.
 FalkorDB remains the runtime authority. Read-only investigation is unchanged unless
-`--create-case` is supplied. There is no LLM, review-writing workflow, automatic
-reopening, or dashboard. All source records/manifests and ingestion contracts remain
-unchanged. This human guide contains demo IDs and is excluded from runtime Docker
+`--create-case` is supplied. The next milestone adds the [human review workflow](reviews.md), [tool-calling
+agent](agent.md), and policy-controlled reopening; the dashboard remains deferred. Source records/manifests and ingestion
+contracts remain unchanged. This human guide contains demo IDs and is excluded from runtime Docker
 contexts alongside `evaluation/` and the other human scenario guides.
 
 ## Run the complete workflow
@@ -81,8 +81,8 @@ The deterministic seed-42 case IDs are:
 - Household: `inv_b3a91ceaf1c249cbc0ea0da5def7897f46f58b6c166c1de4aee092c9bdf6e954`
 
 The tests also created a configurable 65 / MEDIUM case and updated it to 0 / LOW
-without changing OPEN status. A CLOSED case retained its status and review when
-append or a lower-priority reassessment arrived. These are prioritization heuristics
+without changing OPEN status. A CLOSED case retained its status and review for
+unchanged evidence or a lower-priority reassessment. Material new qualifying evidence can now reopen it. These are prioritization heuristics
 over synthetic fixtures, not a fraud probability or proof of wrongdoing.
 
 ## Identity and duplicate prevention
@@ -124,6 +124,8 @@ assessment; this is distinct from replaying an already saved assessment.
 
 | Input | Action |
 | --- | --- |
+| All current facts covered by applicable benign review | ALREADY_REVIEWED |
+| CLOSED + new unexplained qualifying facts | REOPENED, same case |
 | COMPLETE MEDIUM/HIGH, no exact managed group | CREATED, status OPEN |
 | COMPLETE LOW, no published exact group | NO_CASE_REQUIRED |
 | COMPLETE new assessment for an existing exact group, including LOW | UPDATED |
@@ -141,12 +143,12 @@ and marks those existing cases `requires_review=true`; its returned assessment
 explains the changed group. The flag preserves status, scores, reviews, and prior
 membership. Later review tooling can decide how to handle such changes.
 
-Case reviewer `status` and publication state are separate. Existing OPEN,
-IN_REVIEW, CLOSED, or REOPENED status is never overwritten by this writer. New
-evidence on a CLOSED case sets `requires_review` and preserves CLOSED. There is
-no automatic confirmation, closure, or reopening. Existing Review nodes,
-HAS_REVIEW links, and ABOUT links are preserved and readable. No new Review is
-created. An account never receives a permanent abuse/benign status.
+Case reviewer `status` and publication state are separate. Existing reviewer status is preserved, except CLOSED changes to REOPENED when
+COMPLETE MEDIUM/HIGH evidence contains material new unexplained facts. Unchanged
+benign-covered evidence returns ALREADY_REVIEWED; LOW/incomplete never reopens.
+The writer itself rechecks memory under the shared lease. Closure and other reviewer
+status changes require explicit human review actions. Existing Review nodes,
+HAS_REVIEW links, and ABOUT links are preserved. Case policy creates no human Review. An account never receives a permanent abuse/benign status.
 
 The default read-only JSON retains the investigation result shape. With
 `--create-case`, a `case_action` object is added with action, case/assessment IDs,
@@ -178,10 +180,10 @@ Only fixed parameterized queries are executed.
    Existing immutable content must match. Verify all matched endpoint counts,
    membership, assessment link, exact evidence content/cardinality, and overlaps.
 3. Recheck READY/revision. One final query guards the READY dataset/horizon and
-   staged analytical hash, publishes Assessment READY with completion time,
+   staged analytical hash, publishes the HAS_ASSESSMENT attachment and Assessment READY,
    updates the case's current score/priority/time and latest property/edge, adds
    compatible case HAS_EVIDENCE links, and applies review flags. Reviewer status
-   remains untouched. The saved case is read back and verified.
+   remains untouched unless the new-evidence reopening policy applies. The saved case is read back and verified.
 
 The milestone uses **idempotent writes plus completion markers**, not an assumed
 Neo4j transaction API or a cross-query transaction. Query parameter/deadline and
@@ -220,9 +222,9 @@ the verified scope.
 
 ## Initialization, checks, and later agent tools
 
-Run `uv run ringlens schema init` on the existing graph. It adds only five range
-indexes (25 total) and is idempotent; it never seeds or replaces nodes/edges.
-The 20 → 25 upgrade was tested with existing imported records intact.
+Run `uv run ringlens schema init` on the existing graph. It adds the missing range
+indexes (30 total) and is idempotent; it never seeds or replaces nodes/edges.
+The 20 → 30 and 25 → 30 upgrades are tested with existing records intact.
 
 ```sh
 uv run pytest tests/unit
@@ -255,5 +257,5 @@ Services available for the later tool-calling agent (all take the existing
 Compose investigate/apply-case for an explicit mutation tool; pass the internally
 computed result, not agent-invented score/priority fields. Keep raw Cypher and
 evaluation files outside tool inputs. `scoring.score_records()` remains a pure
-internal arithmetic service. The later milestone must add review submission,
-review membership/lifecycle policy, and agent orchestration; none is implemented here.
+internal arithmetic service. The [review](reviews.md) and [agent](agent.md) services now add these workflows,
+without exposing raw assessment payloads or human-review mutation to the LLM.

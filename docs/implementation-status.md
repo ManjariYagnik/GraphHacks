@@ -1,5 +1,180 @@
 # RingLens implementation status
 
+## Persistent reviewer memory and tool-calling agent milestone
+
+Updated: 2026-10-17 (Asia/Kolkata).
+
+Implemented through the human reviewer CLI and official OpenAI native tool-calling
+adapter. Existing graph discovery, v1 scoring, source/file contracts, fixture bytes,
+ingestion, case identity and immutable history were preserved. No dashboard or
+API server was added. No applicable AGENTS.md or preconfigured LLM provider was
+found. OpenAI Docs skill instructions and official Responses/function-calling/Python
+SDK documentation were read before implementing the provider. No subagents were used.
+
+### Inspection and baseline checks
+
+Read README, implementation status, graph/data-contract/investigation/case/scenario
+guides, source/assessment models, configuration, graph wrapper, ingestion, manifests,
+and existing tests. Before extension:
+
+- `.venv/bin/pytest tests/unit -q`: **263 passed**.
+- `.venv/bin/pytest tests/integration --run-integration -q --tb=short`:
+  **65 passed, 1 persistence test skipped** without its explicit restart option.
+- Ruff passed. No source data, manifests, scenario truth, traversal queries or
+  scoring arithmetic were changed to accommodate this milestone.
+
+### Files and additive changes
+
+| Files | Responsibility |
+| --- | --- |
+| `src/ringlens/review_models.py` | Strict ScopedReview/ReviewRequest/EvidenceFact/ReviewContext, canonical JSON scope and fact-hash validation; legacy Review remains unchanged |
+| `src/ringlens/review_queries.py` | Fixed parameterized review/standalone-assessment staging, scoped links, corrections and guarded completion |
+| `src/ringlens/reviews.py` | Canonical assessment recomputation, append-only/retry-safe human reviews, snapshot persistence without a case, deterministic scope matching and material-change comparison |
+| `src/ringlens/case_models.py`, `case_queries.py`, `cases.py` | ALREADY_REVIEWED/REOPENED actions, independent memory checks before case publication, preservation of reviews/overlap policy, READY standalone-snapshot attachment and attachment completion markers |
+| `src/ringlens/agent_tools.py` | Five strict native tool schemas, server-issued references/validated stored snapshots, code-enforced modes, bounded results and explicit errors |
+| `src/ringlens/agent_provider.py` | OpenAI Responses function calls, secret credentials/model settings, timeouts, one transport retry, missing-configuration/provider errors |
+| `src/ringlens/agent.py` | Bounded tool loop, cached call IDs, deterministic grounded final output, sanitized AgentRun audit and fresh-process run lookup |
+| `src/ringlens/cli.py` | reviews record/history; agent run/show-run; thin delegation to domain services |
+| `src/ringlens/schema.py`, `verify.py` | AgentRun label, two review relation signatures, five additional range indexes, AgentRun stats count |
+| `.env.example`, `pyproject.toml`, `uv.lock` | Optional provider variables and official openai SDK, locked at 2.54.0; Python 3.12 retained |
+| `tests/unit/test_agent_provider.py` | 13 offline strict-tool/settings/review/fingerprint tests, including real SDK with fake HTTP transport |
+| `tests/integration/test_reviews.py` | 11 real-graph review, CLI, scope/correction, restart, retry, append/reopen and 25 → 30 index upgrade checks |
+| `tests/integration/test_agent.py` | 10 mocked-provider/real-graph tool-orchestration tests, including read-only permissions, stale/capped analysis, fresh-session memory, duplicate prevention, CLOSED reopening and historical evidence lookup |
+| `tests/integration/test_agent_live.py`, `tests/conftest.py` | Explicit --run-live-agent smoke, never silently substituted by a mock; still requires integration access |
+| `tests/integration/test_cases.py` | Existing acceptance behavior preserved; index assertions updated to additive 30-index schema (also verifies 20 → 30) |
+| README, `docs/reviews.md`, `docs/agent.md`, schema/case/investigation guides | Setup, commands, human/demo workflow, decisions, interfaces, limitations |
+| `.dockerignore` | Excludes new human scenario guides; evaluation/ remains excluded |
+
+Schema now has **12 labels, 15 relationship types / 16 signatures, 30 range
+indexes**. New signatures: Review REVIEWS_ASSESSMENT Assessment and Review
+SUPERSEDES Review. Review adds reviewer, assessment/evidence scope/fingerprints,
+optional case/validity/supersedes, and LOADING/READY metadata through ScopedReview.
+AgentRun stores sanitized runtime audit. No source-model/schema-version migration
+is needed. `schema init` adds missing indexes only; 25 → 30 and repeat-zero behavior
+are verified without altering existing records. Native uniqueness guarantees are
+not newly claimed.
+
+HAS_ASSESSMENT now has a separate LOADING/READY attachment marker. Existing links
+without the property are compatible as READY. This fixes the failure/retry edge
+case where a completed standalone review snapshot is attached to an existing
+published case: the prior completed history remains readable until final case
+publication succeeds, and retry safely completes without duplicate snapshots.
+
+### Decisions and observed behavior
+
+Reviews are explicit human-only writes, recomputed from canonical graph state,
+never model-authored outcomes. Identical intent/assessment/scope hashes return the
+same completed review without editing it. Corrections append SUPERSEDES, retain
+history and exact original fact scope, and reject branches. Optional validity is
+inclusive by assessment event time. Legacy unscoped reviews remain readable but
+provide no automated clearance. Reviewer identifiers are local caller assertions;
+this milestone adds no identity/authentication service.
+
+Fact fingerprints separate actual rule/version/source records/measurements from
+assessment time, input revision and assessment-specific evidence IDs. Matching
+benign scope is limited to the same anchor and reviewed records (including a
+narrowed subset aging out of the window); new transactions, account membership,
+bursts and increased global device use are not cleared. NEEDS_MORE_INFORMATION
+is consideration, never benign clearance. Reviewing one rule does not suppress
+another. Numeric scores remain unchanged.
+
+| Synthetic request | Observed rules/score | Disposition |
+| --- | --- | --- |
+| Pattern A, ref_2b42ec18e21a70bdfa15 | R1–R4, 90 HIGH, four accounts | CREATED; repeat/another seed EXISTING_UNCHANGED |
+| Pattern B, ref_9082163771ef0a5e5b26 | R1–R4, 90 HIGH, five accounts including depth 2 | Existing traversal/case acceptance passes, CREATED/reuse |
+| Base household, ref_4d44e5cc3e0a8dae77fd | R1/R5, 35 LOW | NO_CASE_REQUIRED before review |
+| Household after scoped benign review | Unchanged 35 LOW | ALREADY_REVIEWED; standalone assessment/evidence/review, zero cases |
+| Household after six appended refund events | R1–R5, 100 HIGH; two new bursts, three accounts at 3/5 refunds | CREATED; repeat EXISTING_UNCHANGED; old R1/R5 review retained |
+| Separate CLOSED household fixture with qualifying new evidence | 100 HIGH | REOPENED same case, prior review/assessments retained |
+
+The CLOSED fixture uses an explicit test-only base scoring configuration to create
+a MEDIUM case, then a human review explicitly closes it. Default LOW never creates
+an artificial escalated case. Unchanged A evidence after an unrelated import/clock
+change remains explained. LOW and incomplete new results never reopen cases.
+
+Case persistence rechecks memory itself under the shared graph writer lease and
+again before final publication, alongside existing READY/revision/completeness
+checks. Agent context is advisory to the LLM; it cannot bypass domain policy.
+Overlapping group handling is preserved; cases are not silently merged.
+
+Five tools: analyze_refund, get_evidence, get_review_context, apply_case_policy,
+get_case. Inputs cannot include an authoritative score/assessment JSON payload.
+Session references are application-issued; stored asm_ references must resolve
+to validated READY snapshots. Current memory/action requests reject stale revision.
+Historical evidence lookup remains read-only and can explain old case snapshots.
+Assess mode forbids all case mutations in code; only AgentRun audit is written.
+Human review mutation is absent from the tool allowlist. Investigate mode authorizes
+policy-controlled case writes without repeated approval.
+
+Final responses render confirmed records, paths, rule contributions, review IDs,
+reviewed scope, new/unexplained evidence, and actual case actions. Unsupported
+provider prose is discarded. The heuristic score is not proof of wrongdoing.
+Review notes/source strings are untrusted data. SDK encrypted reasoning stays only
+in RAM for stateless continuation and is never retained as audit. AgentRun saves
+minimal names/status/IDs/action summaries/errors/final text, not raw messages,
+credentials, raw tool arguments or provider reasoning. A crash-left RUNNING is not
+success. Audit failure after a write reports uncertainty rather than denying a
+possibly committed action.
+
+### Exact commands run and actual outcomes
+
+Local uv remains at `.tools/uv-package/bin/uv`; set UV_CACHE_DIR=.tools/uv-cache
+and UV_PYTHON_INSTALL_DIR=.tools/python when using that installation. Ordinary user
+commands use `uv` on PATH. Network/socket approvals were used for dependency install
+and real local database checks. Tests clean up only their UUID-named graphs.
+
+| Command | Actual result |
+| --- | --- |
+| `uv add 'openai>=2,<3'` (local uv with approved network) | Installed official openai 2.54.0; lock resolves 36 packages |
+| `uv lock --check --offline` | Passed |
+| `uv sync --locked --offline` | Passed; editable package rebuilt/installed |
+| `.venv/bin/ruff check .` | Passed |
+| `.venv/bin/ruff format --check .` | Passed, 55 files formatted |
+| Imports of agent/provider/tools/reviews; `ringlens --help`, `reviews record --help` | Passed; CLI exposes reviewer/agent commands |
+| `.venv/bin/ringlens agent run --message 'Explain refund ref_4d44e5cc3e0a8dae77fd'` | Expected exit 1 with actionable missing-key/model message; no live call |
+| `.venv/bin/pytest tests/unit/test_agent_provider.py -q --tb=short` (initial 12-test version) | 12 passed; fallback test added subsequently and passes in final suite |
+| `.venv/bin/pytest tests/integration/test_cases.py tests/integration/test_reviews.py tests/integration/test_agent.py --run-integration -q --tb=short` (before final CLI test) | 41 passed |
+| `.venv/bin/pytest --run-persistence -q --tb=short` (final current code) | **363 passed, 1 live-provider test skipped, 22.73 seconds**: 276 unit + 87 real-database tests; includes orderly restart persistence |
+| `.venv/bin/pytest tests/integration/test_agent_live.py --run-integration --run-live-agent -q` | **1 skipped**: provider key/model absent, no live request performed |
+| `.venv/bin/ringlens doctor` after restart suite | Passed: valid configuration, reachable database, FalkorDB commands available |
+| `git diff --check` | Passed |
+
+An initial full run failed one newly added CLI test due to a missing json test
+import (361 passed, one failed). The import was corrected and final runs pass.
+This was a test defect, not a database verification blocker. No application graph
+or named volume was deleted/reset. Persistence restarts retained the volume and
+removed only the dedicated test graph afterward.
+
+Provider tests are separated: official SDK uses a fake HTTP transport offline;
+scripted native ProviderTurn mocks call real graph/domain services in integration.
+These do not verify real model selection or live account/API compatibility.
+
+### Setup, demo and next milestone
+
+Run `uv sync --locked`, `docker compose up -d --wait`, `ringlens schema init`,
+then follow the fresh-graph sequences in [reviews.md](reviews.md) and
+[agent.md](agent.md). They include actual opaque refund/case IDs, initial analysis,
+explicit human review, fresh-process lookup, append and changed case disposition.
+Optional provider variables are listed in .env.example: RINGLENS_OPENAI_API_KEY
+(or OPENAI_API_KEY), RINGLENS_AGENT_MODEL, RINGLENS_AGENT_TIMEOUT_SECONDS (30),
+RINGLENS_AGENT_MAX_TURNS (8), RINGLENS_AGENT_MAX_TOOL_CALLS (16).
+
+**Remaining unverified behavior:** no real provider smoke was possible without
+credentials/model. The real SDK adapter is implemented, but no live LLM outcome
+is claimed. Run the opt-in live command above after configuring the ignored .env.
+No other required local database or offline check remains blocked. Concurrency,
+power-loss recovery, provider model/account compatibility and real-world detection
+accuracy are not claimed. Single-writer/completion-marker limitations persist.
+
+The Streamlit milestone can consume AgentTools.execute/tool_schemas,
+run_agent/get_agent_run, investigate, compare_evidence, record_review(ReviewRequest),
+review_history, apply_case_policy, get_case and list_cases. Keep human review/status
+controls outside the LLM tool allowlist. Separate audit writes from read-only case
+permissions; disclose incomplete results and display omissions. The dashboard is
+not implemented here. No commit was requested or created.
+
+---
+
 ## Traversal, scoring, and case-creation milestone
 
 Updated: 2026-10-16 (Asia/Kolkata).

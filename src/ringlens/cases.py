@@ -215,8 +215,22 @@ def apply_case_policy(store: GraphStore, result: InvestigationResult) -> CaseAct
         assert_current_input(store, result)
         with store.import_lock() as renew:
             assert_current_input(store, result)
+            from ringlens.reviews import compare_evidence
+
+            memory = compare_evidence(store, result)
+            if memory.recommendation == "ALREADY_REVIEWED":
+                return CaseAction(
+                    action="ALREADY_REVIEWED",
+                    case_id=memory.case_id,
+                    assessment_id=assessment_id,
+                    reason="All current qualifying facts are covered by applicable benign "
+                    "human reviews.",
+                )
             case = _one_case(store, case_id)
             action = "UPDATED" if case and case.publication_status == "READY" else "CREATED"
+            reopening = memory.recommendation == "REOPEN" and result.priority in {"MEDIUM", "HIGH"}
+            if reopening:
+                action = "REOPENED"
             params = {
                 "case_id": case_id,
                 "assessment_id": assessment_id,
@@ -264,20 +278,22 @@ def apply_case_policy(store: GraphStore, result: InvestigationResult) -> CaseAct
                     raise CaseServiceError(
                         "Assessment key was reused with different analytical content."
                     )
-                if staged.status == "READY":
+                if (
+                    staged.status == "READY"
+                    and case
+                    and case.publication_status == "READY"
+                    and not reopening
+                ):
                     saved = get_case(store, case_id)
-                    if staged.id not in {a.id for a in saved.assessments}:
-                        raise CaseServiceError(
-                            "READY assessment is missing its completed case link."
+                    if staged.id in {a.id for a in saved.assessments}:
+                        return CaseAction(
+                            action="EXISTING_UNCHANGED",
+                            case_id=case_id,
+                            assessment_id=assessment_id,
+                            reason="Identical completed group assessment already exists.",
+                            requires_review=saved.investigation.requires_review,
+                            overlapping_case_ids=saved.overlapping_case_ids,
                         )
-                    return CaseAction(
-                        action="EXISTING_UNCHANGED",
-                        case_id=case_id,
-                        assessment_id=assessment_id,
-                        reason="Identical completed group assessment already exists.",
-                        requires_review=saved.investigation.requires_review,
-                        overlapping_case_ids=saved.overlapping_case_ids,
-                    )
             expected_evidence = [finding.evidence for finding in result.triggered_rules]
             _check_evidence(store, expected_evidence)
             now = max(int(time.time()), case.created_at if case else 0)
@@ -346,6 +362,9 @@ def apply_case_policy(store: GraphStore, result: InvestigationResult) -> CaseAct
                 write(q.LINK_OVERLAPS, {"pairs": pairs}, len(pairs))
             _check_stage(store, case_id, staged, expected_evidence, account_ids)
             dataset, _ = assert_current_input(store, result)
+            final_memory = compare_evidence(store, result)
+            if final_memory != memory:
+                raise CaseServiceError("Review context changed during case persistence; reassess.")
             publish_attempted = True
             write(
                 q.PUBLISH_WITH_EVIDENCE if expected_evidence else q.PUBLISH,
@@ -355,6 +374,7 @@ def apply_case_policy(store: GraphStore, result: InvestigationResult) -> CaseAct
                     "group_key": group,
                     "analytical_hash": staged.analytical_hash,
                     "has_overlaps": bool(overlap_ids),
+                    "reopen": reopening,
                     "completed_at": max(int(time.time()), staged.created_at, now),
                 },
                 1,
@@ -413,7 +433,8 @@ def get_case(store: GraphStore, case_id: str) -> CaseDetail:
     history = [_assessment(props) for props, _ in store.read(q.HISTORY, params).result_set]
     if len(history) != len({a.id for a in history}):
         raise CaseServiceError("Duplicate assessment IDs or HAS_ASSESSMENT links.")
-    ready = [a for a in history if a.status == "READY"]
+    pending_links = {row[0] for row in store.read(q.PENDING_ATTACHMENTS, params).result_set}
+    ready = [a for a in history if a.status == "READY" and a.id not in pending_links]
     snapshots = {a.id: _validate_saved(a) for a in ready}
     for item in ready:
         if item.group_key != case.group_key or item.dataset_id != case.dataset_id:
@@ -454,7 +475,9 @@ def get_case(store: GraphStore, case_id: str) -> CaseDetail:
     overlaps = _unique_ids(store.read(q.OVERLAPS, params).result_set, "Duplicate OVERLAPS links.")
     reviews, review_links, review_edges = {}, {}, {}
     for props, parent_link, evidence_id, about_link in store.read(q.REVIEWS, params).result_set:
-        review = Review.model_validate(props)
+        if props.get("publication_status") == "LOADING":
+            continue
+        review = Review.model_validate({key: props[key] for key in Review.model_fields})
         if review.id in review_links and review_links[review.id] != parent_link:
             raise CaseServiceError("Duplicate HAS_REVIEW links.")
         reviews[review.id], review_links[review.id] = review, parent_link
@@ -470,7 +493,9 @@ def get_case(store: GraphStore, case_id: str) -> CaseDetail:
             id_: sorted(set(review_edges.get(id_, {}).values())) for id_ in sorted(reviews)
         },
         overlapping_case_ids=overlaps,
-        pending_assessment_ids=[a.id for a in history if a.status != "READY"],
+        pending_assessment_ids=[
+            a.id for a in history if a.status != "READY" or a.id in pending_links
+        ],
     )
 
 

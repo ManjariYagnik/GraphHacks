@@ -5,7 +5,8 @@ expansions through devices, and returns source records, explanation paths, and
 explicit v1 priority contributions. The default investigation remains read-only.
 `--create-case` additionally applies the completed-assessment case policy described
 in [cases.md](cases.md), preserving immutable history and existing reviewer decisions.
-There is no LLM, review workflow, or dashboard in this milestone.
+The next milestone adds the [agent](agent.md) and [review workflow](reviews.md);
+the dashboard remains deferred.
 
 This guide contains human demo scenario names and IDs. It is excluded from runtime
 Docker build contexts with `evaluation/` and the other human scenario/status guides.
@@ -263,7 +264,7 @@ are not claimed. Two expansions intentionally do not exhaust an arbitrarily
 large connected component. Query failures/state changes were injected in tests;
 no production process was deliberately disconnected or corrupted.
 
-## Case persistence and the later agent
+## Case persistence and the agent
 
 `cases.apply_case_policy(store, result)` persists only COMPLETE assessments for a
 still-current READY input revision. MEDIUM/HIGH creates a new OPEN case; LOW creates
@@ -273,7 +274,17 @@ Case keys exclude the seed, and successful assessments are immutable history.
 identity, overlap, completion-marker, retry, and reviewer-preservation contract is
 in [cases.md](cases.md).
 
-The later tool-calling agent can compose these services with `investigate()`;
+The tool-calling agent composes these services with `investigate()`;
 deterministic code remains responsible for evidence, score, priority, and case policy.
-Review outcomes and case transition/reopening workflows remain later work. An
+The review workflow now adds scoped decisions and controlled reopening. An
 account gains no permanent status from a priority or reviewer decision.
+
+## Persistent reviewer memory and agent tools
+
+The [review milestone](reviews.md) adds scoped append-only human decisions and
+case disposition comparison. Numeric v1 scores, queries and inclusive windows
+remain unchanged. Read-only investigation still saves nothing. Explicit human
+review writes can save a LOW assessment without a case; `--create-case` now
+rechecks scoped benign coverage and may return ALREADY_REVIEWED or REOPENED for
+material new qualifying evidence on a closed case. The [agent](agent.md) calls
+these same services through typed tools; it does not author scores or reviews.

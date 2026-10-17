@@ -12,7 +12,8 @@ synthetic fixtures and file validation. Phase 4 adds validated, resumable Falkor
 ingestion and graph verification. Phase 5 adds two device expansions, evidence
 paths, and transparent v1 priority rules. The case milestone adds explicit case
 creation, immutable assessment history, duplicate prevention, and saved-case readers.
-The review workflow, LLM orchestration, API servers, and dashboards remain deferred.
+The current milestone adds persistent scoped human reviews and a native tool-calling
+OpenAI agent. API servers and the dashboard remain deferred.
 
 ## Setup
 
@@ -123,9 +124,11 @@ never publish cases. Reviewer status and earlier assessments are preserved.
 Group keys exclude the seed refund, so another seed with the same group/evidence
 reuses the case and assessment. New input/window/scoring configuration appends an
 assessment; a changed group gets its own case and overlap review flags. CLOSED
-cases stay CLOSED. Case readers show only completed assessments and use the latest
-assessment's score; historical evidence contributions are never added together.
-Rerun `schema init` to add five indexes (25 total), without removing data or indexes.
+cases reopen only for material new unexplained qualifying evidence; unchanged
+reviewed facts preserve the reviewer decision. Case readers show only completed
+assessments and use the latest assessment's score; historical evidence contributions
+are never added together. Rerun `schema init` to add five review/agent indexes
+(30 total), without removing data or indexes.
 
 Use `--graph NAME` for disposable graphs. `--max-accounts` (100) and
 `--max-evidence` (2000 distinct paths, also a per-query row bound) limit work.
@@ -134,7 +137,45 @@ missing/non-READY data exits 1 and invalid inputs exit 2. `--display-paths` caps
 text rendering only, after analysis, and discloses omitted paths. JSON remains full.
 See the human-only [investigation guide](docs/investigation.md) for actual generated
 refund IDs and rules, and the [case guide](docs/cases.md) for a complete demo,
-identities, completion/retry semantics, and interfaces for later agent tools.
+identities and completion/retry semantics. The [review guide](docs/reviews.md) and
+[agent guide](docs/agent.md) cover persistent memory, native tools, and full demos.
+
+## Human reviews and investigation agent
+
+Review an existing complete assessment explicitly, even when LOW creates no case:
+
+```sh
+uv run ringlens reviews record --refund-id ref_4d44e5cc3e0a8dae77fd --reviewer-id demo-reviewer --outcome BENIGN_EXPLANATION --explanation "Shared device and address explained; future events are not cleared." --rule R1 --rule R5
+uv run ringlens reviews history --refund-id ref_4d44e5cc3e0a8dae77fd
+```
+
+Run this before importing new evidence to reproduce the base-household demo. Review
+writes recompute canonical graph evidence, save an immutable snapshot without
+manufacturing a case, and append a scoped decision. Corrections use `--supersedes`;
+case closure requires explicit `--case-id` and `--case-status CLOSED`. A benign
+explanation applies only to reviewed facts. Scores remain unchanged. New household
+bursts after append remain unexplained and qualify for case creation. See the
+[review guide](docs/reviews.md) for the fresh-graph sequence and closure/reopen policy.
+
+To enable the real agent, set `RINGLENS_OPENAI_API_KEY` (or `OPENAI_API_KEY`) and
+`RINGLENS_AGENT_MODEL` in the ignored `.env`, then `uv sync --locked`. No model is
+assumed. The official OpenAI SDK uses Responses native structured tool calls.
+Missing configuration fails clearly before a provider request.
+
+```sh
+uv run ringlens agent run --message "Explain refund ref_2b42ec18e21a70bdfa15" --mode assess
+uv run ringlens agent run --message "Investigate refund ref_4d44e5cc3e0a8dae77fd and open a case if needed." --mode investigate --format json
+uv run ringlens agent show-run --run-id RUN_ID
+```
+
+Default assess mode allows analysis/evidence/review/case lookup and enforces a
+case-write prohibition in code; it saves AgentRun audit only. Investigate mode
+authorizes deterministic case policy without repeated confirmation. Human reviews
+are never an agent tool. Grounded final responses name confirmed evidence, sources,
+reviews and case actions. Fresh sessions retrieve memory from FalkorDB. The
+[agent guide](docs/agent.md) documents tools, bounds, credentials, setup and the
+initial-review/restart/append demonstration. Provider mocks exercise orchestration;
+this workspace has no credentials/model, so live provider behavior remains unverified.
 
 ## Durability and shutdown
 
@@ -177,6 +218,9 @@ uv run pytest tests/integration --run-integration
 uv run pytest tests/integration --run-persistence
 uv run pytest tests/integration/test_ingest.py --run-integration
 uv run pytest tests/integration/test_cases.py --run-integration
+uv run pytest tests/integration/test_reviews.py tests/integration/test_agent.py --run-integration
+# Optional live provider smoke, after configuring key/model (may incur charges):
+uv run pytest tests/integration/test_agent_live.py --run-integration --run-live-agent
 ```
 
 Generate and validate the synthetic fixtures without a database:

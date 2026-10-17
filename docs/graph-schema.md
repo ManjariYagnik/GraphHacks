@@ -2,7 +2,7 @@
 
 FalkorDB is the authoritative runtime store. Graph relationships determine the
 connections available to investigations. The source contract remains 1.0. The
-case milestone adds Assessment/history/publication metadata without changing source
+case and review milestones add Assessment/history/publication metadata without changing source
 records, import metadata, fixture manifests, or the existing review model.
 
 `models.py` uses strict Pydantic records with unknown fields forbidden. IDs are
@@ -83,8 +83,8 @@ Allowed case relationships:
 - `(Review)-[:ABOUT]->(Evidence)`
 
 The case writer checks endpoints and avoids duplicate edges. Review nodes/links
-are preserved; no review writer, automatic reopening, or reviewer state-transition
-engine is implemented. The future review workflow must validate ABOUT membership.
+are preserved. The explicit human review writer validates scope and endpoints;
+policy-controlled reopening requires new unexplained qualifying evidence.
 
 `details_json` is a string encoding a validated JSON object. Use
 `evidence_details_json(details)` to explicitly encode a dictionary before assigning
@@ -136,12 +136,45 @@ Existing Investigation INCLUDES and HAS_EVIDENCE remain supported. Case HAS_EVID
 is the union of evidence from completed history; the current score comes only
 from LATEST_ASSESSMENT. Reviews and ABOUT links are never rewritten. OVERLAPS is
 read in either direction and sets `requires_review` without changing reviewer status.
-The allowlist now has 11 labels and 13 distinct relationship types (14 signatures,
+The allowlist now has 12 labels and 15 distinct relationship types (16 signatures,
 because HAS_EVIDENCE has two allowed source labels).
 
 Booleans, scalars, and arrays of strings are supported by the pinned server and
 live tests. Nested paths, records, thresholds, and measurements stay inside
 validated JSON strings. See [cases.md](cases.md) for exact keys and retry behavior.
+
+### Additive scoped human reviews and agent audit
+
+`review_models.ScopedReview` extends the legacy four-field Review with:
+`reviewer_id`, `dataset_id`, `assessment_id`, `rule_version`, `account_ids`,
+`evidence_ids`, fact `fingerprints`, canonical validated `scope_json`, optional
+`case_id`, explicit `case_status`, `supersedes`, `valid_until`, and
+`publication_status` LOADING/READY. Immutable reviewed facts live inside JSON;
+scalars and string arrays remain native properties. Legacy reviews remain readable
+but cannot provide automated benign clearance without scope. No account status is added.
+
+Additional relationships:
+
+- `(Review)-[:REVIEWS_ASSESSMENT]->(Assessment)` (one complete snapshot)
+- `(Review)-[:SUPERSEDES]->(Review)` (optional correction, append-only history)
+
+Review ABOUT links select the reviewed evidence. A standalone reviewed LOW
+Assessment need not have an Investigation parent. It may later be attached to a
+qualifying case without duplicating the snapshot. HAS_ASSESSMENT edges now carry
+`publication_status`: LOADING during case attachment, READY only in the final case
+publication query. Missing markers on legacy links are treated as READY. This
+prevents a previously completed standalone snapshot from leaking into a partially
+published case update. Review and case writers share the ingestion writer lease.
+
+`AgentRun` has `id` (run_ + UUID hex), `mode` (assess/investigate), execution
+`status` (RUNNING/COMPLETE/INCOMPLETE/FAILED), `started_at`, optional `completed_at`,
+string arrays `requested_refund_ids`, `requested_case_ids`, `assessment_references`,
+`assessment_ids`, `case_ids`, validated canonical strings `activity_json` and
+`errors_json`, and grounded `final_response`. Activity stores tool names/status,
+relevant IDs/actions and sanitized errors. No raw prompt, raw tool arguments,
+provider reasoning or credentials are retained. Audit is independent of case
+publication and creates no source/review records. A crash-left RUNNING run is not
+success. See [reviews.md](reviews.md) and [agent.md](agent.md).
 
 ## Import metadata
 
@@ -175,7 +208,7 @@ Existing data and indexes are never dropped or replaced. Completed indexes remai
 after failure; rerun to finish. Run one initializer/importer per graph at a time.
 A verified concurrently created index is accepted; unrelated errors still fail.
 
-Range indexes cover `id` on all eleven labels, plus:
+Range indexes cover `id` on all twelve labels, plus:
 
 | Label | Additional indexes |
 | --- | --- |
@@ -184,17 +217,17 @@ Range indexes cover `id` on all eleven labels, plus:
 | Refund | `requested_at` |
 | Investigation | `assessment_as_of`, `updated_at` |
 | Evidence | `window_start`, `window_end` |
-| Review | `reviewed_at` |
+| Review | `reviewed_at`, `reviewer_id`, `dataset_id`, `publication_status` |
 | Dataset | `as_of` |
 | ImportBatch | `started_at` |
 | Assessment | `window_end`, `created_at`, `input_revision` |
+| AgentRun | `started_at` |
 | Investigation | `group_key` |
 
-There are 25 range indexes. Upgrading the original 20-index graph creates only
-Assessment.id, Assessment.window_end, Assessment.created_at,
-Assessment.input_revision, and Investigation.group_key. Repeating initialization
-creates none. This upgrade was verified with existing imported records intact;
-no cases, assessments, or other data are seeded by initialization.
+There are 30 range indexes. Upgrading the 25-index case graph adds AgentRun.id,
+AgentRun.started_at, Review.reviewer_id, Review.dataset_id and
+Review.publication_status. The original 20-index graph adds those plus the five
+Assessment/case indexes. Repeating initialization creates zero indexes and no records.
 
 **Indexes accelerate lookups; they do not enforce uniqueness.** Native `UNIQUE`
 and `MANDATORY` support was checked in the pinned release's
