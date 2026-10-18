@@ -120,12 +120,26 @@ def _grounded(tools):
 
 
 def run_agent(
-    store, message: str, *, mode="assess", provider, settings: AgentSettings | None = None
+    store,
+    message: str,
+    *,
+    mode="assess",
+    provider,
+    settings: AgentSettings | None = None,
+    required_refund_id: str | None = None,
+    required_as_of: int | None = None,
+    required_window_days: int | None = None,
 ):
     if not isinstance(message, str) or not message.strip() or len(message) > 4000:
         raise ValueError("Agent message must contain 1..4000 characters.")
     settings = settings or AgentSettings()
-    tools = AgentTools(store, mode=mode)
+    tools = AgentTools(
+        store,
+        mode=mode,
+        required_refund_id=required_refund_id,
+        required_as_of=required_as_of,
+        required_window_days=required_window_days,
+    )
     id_, started = "run_" + uuid4().hex, int(time.time())
     errors, status = [], "RUNNING"
 
@@ -201,6 +215,12 @@ def run_agent(
                     tools.execute("get_review_context", {"assessment_reference": reference})
                     audit()
                 complete = bool(tools.assessments or tools.cases)
+                if required_refund_id is not None:
+                    complete &= any(
+                        reference in tools.analyzed_references
+                        and result.seed_refund_id == required_refund_id
+                        for reference, result in tools.assessments.items()
+                    )
                 for reference, result in tools.assessments.items():
                     if reference not in tools.analyzed_references:
                         continue  # Historical evidence lookup is not a new assessment request.

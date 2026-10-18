@@ -150,6 +150,55 @@ def test_real_tools_and_grounded_case_actions_repeat_and_lookup(graph):
     assert case_id in explained.references
 
 
+def test_agent_bound_to_selected_refund_cannot_write_for_another(graph):
+    store, _ = graph
+    result = run_agent(
+        store,
+        "Investigate the selected refund",
+        mode="investigate",
+        provider=ScriptedProvider(seed=HOUSE),
+        required_refund_id=PATTERN,
+    )
+    assert result.status == "INCOMPLETE"
+    assert any(activity["status"] == "ERROR" for activity in result.activities)
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[0]]
+
+
+def test_bound_agent_cannot_apply_policy_to_unrelated_saved_assessment(graph):
+    store, _ = graph
+    case = apply_case_policy(store, investigate(store, PATTERN))
+    assert case.assessment_id is not None
+    tools = AgentTools(store, mode="investigate", required_refund_id=HOUSE)
+    context = tools.execute("get_review_context", {"assessment_reference": case.assessment_id})
+    assert context["status"] == "OK"
+    attempted = tools.execute("apply_case_policy", {"assessment_reference": case.assessment_id})
+    assert attempted["status"] == "ERROR"
+    assert "fresh analysis of the selected refund" in attempted["errors"][0]
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[1]]
+
+
+def test_bound_agent_uses_selected_horizon_and_window(graph):
+    store, _ = graph
+    horizon = investigate(store, PATTERN).assessment_as_of
+    tools = AgentTools(
+        store,
+        required_refund_id=PATTERN,
+        required_as_of=horizon,
+        required_window_days=30,
+    )
+    wrong_time = tools.execute(
+        "analyze_refund",
+        {"refund_id": PATTERN, "as_of": "2026-10-14T10:00:00Z", "window_days": 30},
+    )
+    assert wrong_time["status"] == "ERROR"
+    wrong_window = tools.execute("analyze_refund", {"refund_id": PATTERN, "window_days": 7})
+    assert wrong_window["status"] == "ERROR"
+    correct = tools.execute("analyze_refund", {"refund_id": PATTERN})
+    assert correct["status"] == "OK"
+    assert correct["data"]["as_of"] == horizon
+    assert correct["data"]["priority"] == "HIGH"
+
+
 @pytest.mark.parametrize("mode", ["assess", "investigate"])
 def test_claude_sdk_mock_http_drives_real_graph_tools(graph, monkeypatch, mode):
     """The actual Anthropic SDK calls real services; only the remote HTTP is mocked."""

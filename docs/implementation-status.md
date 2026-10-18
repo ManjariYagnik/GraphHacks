@@ -1,5 +1,47 @@
 # RingLens implementation status
 
+## Complete agent workflow in the frontend
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+The Investigate page now exposes both **Ask agent · read-only** and **Run agent
+and apply case policy** before a manual assessment is required. Both use the
+existing `run_agent` service and provider configuration. The write-enabled
+button invokes the existing typed tool loop; graph discovery, review comparison,
+scoring and case policy remain in domain services. The UI displays run ID,
+completion status, sanitized tool activity, grounded explanation, and only a
+backend-confirmed case action. Agent calls happen only on explicit form submit;
+rerenders and navigation do not trigger paid calls or writes. The agent panel
+uses Dataset.as_of and the default 30-day window. Custom time/window inputs still
+apply to the separate deterministic **Assess refund** form.
+
+The new optional `required_refund_id` parameter on `run_agent`/`AgentTools`
+binds a frontend request to its selected refund. A model tool call for another
+refund is rejected before analysis; a saved assessment for another refund also
+cannot reach case policy because write actions require a fresh, bound analysis.
+Optional required as-of/window parameters bind frontend agent tool calls to the
+selected graph's imported horizon and 30-day default; conflicting model-supplied
+values are rejected.
+Existing CLI callers retain the default unbound behavior. The
+frontend clears any prior displayed run before a new attempt and advises case
+inspection if a write-enabled attempt has an uncertain result. Case/history
+services and schema were unchanged.
+
+`tests/integration/test_dashboard.py` now exercises frontend read-only and
+write-enabled agent buttons against real FalkorDB using a deterministic provider
+mock: read-only creates no case, write-enabled creates one, rerender makes no
+additional AgentRun, and a repeat reuses the case. `test_agent.py` verifies a
+provider cannot switch the bound refund and create a case. The full
+`.venv/bin/pytest --run-integration -q --tb=short` run passed **393 tests** with
+2 opt-in skips (paid live provider and database restart). `.venv/bin/ruff check .`,
+`.venv/bin/ruff format --check .`, and `git diff --check` passed. A loopback
+Streamlit server started and returned `ok` from `/_stcore/health`, then stopped.
+No pixel-level browser walkthrough was available. No live
+Claude/OpenAI call was made for this change; the UI/provider integration is
+verified with a mock provider and real domain tools/database.
+
+---
+
 ## Upload validation rerun fix
 
 Updated: 2026-10-18 (Asia/Kolkata).

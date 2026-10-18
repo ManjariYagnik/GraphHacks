@@ -85,10 +85,31 @@ def tool_schemas():
 
 
 class AgentTools:
-    def __init__(self, store, *, mode="assess"):
+    def __init__(
+        self,
+        store,
+        *,
+        mode="assess",
+        required_refund_id: str | None = None,
+        required_as_of: int | None = None,
+        required_window_days: int | None = None,
+    ):
         if mode not in {"assess", "investigate"}:
             raise ValueError("Invalid agent mode.")
+        if required_refund_id is not None:
+            required_refund_id = AnalyzeArguments.model_validate(
+                {"refund_id": required_refund_id}
+            ).refund_id
+        if required_as_of is not None and (type(required_as_of) is not int or required_as_of < 0):
+            raise ValueError("Bound assessment time must be nonnegative integer UTC seconds.")
+        if required_window_days is not None and (
+            type(required_window_days) is not int or not 1 <= required_window_days <= 3650
+        ):
+            raise ValueError("Bound assessment window must be 1..3650 days.")
         self.store, self.mode = store, mode
+        self.required_refund_id = required_refund_id
+        self.required_as_of = required_as_of
+        self.required_window_days = required_window_days
         self.assessments, self.contexts, self.actions, self.cases = {}, {}, {}, {}
         self.requested_refunds, self.requested_cases = set(), set()
         self.activities = []
@@ -125,6 +146,12 @@ class AgentTools:
             )
             if name == "apply_case_policy" and self.mode != "investigate":
                 raise PermissionError("Assess mode cannot create, update, or reopen cases.")
+            if (
+                name == "analyze_refund"
+                and self.required_refund_id is not None
+                and params.refund_id != self.required_refund_id
+            ):
+                raise PermissionError("Agent tool refund does not match the selected refund.")
             data = self._execute(name, params)
             output = {"status": "OK", "tool": name, "data": data, "errors": []}
             if name == "analyze_refund" and data["completeness"] != "COMPLETE":
@@ -163,11 +190,24 @@ class AgentTools:
     def _execute(self, name, params):
         if name == "analyze_refund":
             self.requested_refunds.add(params.refund_id)
+            selected_as_of = parse_as_of(params.as_of) if params.as_of else None
+            if self.required_as_of is not None:
+                if selected_as_of is not None and selected_as_of != self.required_as_of:
+                    raise PermissionError("Agent tool time differs from the selected data horizon.")
+                selected_as_of = self.required_as_of
+            selected_days = params.window_days or 30
+            if self.required_window_days is not None:
+                if (
+                    params.window_days is not None
+                    and params.window_days != self.required_window_days
+                ):
+                    raise PermissionError("Agent tool window differs from the selected window.")
+                selected_days = self.required_window_days
             result = investigate(
                 self.store,
                 params.refund_id,
-                as_of=parse_as_of(params.as_of) if params.as_of else None,
-                config=InvestigationConfig(window_days=params.window_days or 30),
+                as_of=selected_as_of,
+                config=InvestigationConfig(window_days=selected_days),
             )
             ref = "ar_" + uuid4().hex
             self.assessments[ref] = result
@@ -285,6 +325,13 @@ class AgentTools:
             if reference not in self.contexts:
                 raise ValueError(
                     "Consult get_review_context for this assessment before a case action."
+                )
+            if self.required_refund_id is not None and (
+                reference not in self.analyzed_references
+                or result.seed_refund_id != self.required_refund_id
+            ):
+                raise PermissionError(
+                    "Case action must use a fresh analysis of the selected refund."
                 )
             action = cases.apply_case_policy(self.store, result)
             self.actions[reference] = action

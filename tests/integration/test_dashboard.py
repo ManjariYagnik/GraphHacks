@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from ringlens import streamlit_app
+from ringlens.agent_provider import AgentSettings, ProviderTurn
 from ringlens.cases import apply_case_policy, get_case
 from ringlens.config import Settings
 from ringlens.csv_adapter import CSVSource, csv_bundle, required_columns, validate_csv_sources
@@ -338,3 +340,100 @@ def test_upload_validation_survives_clock_change_and_rerun(graph, monkeypatch):
     next(button for button in app.button if button.label == "Preview and validate").click().run()
     assert not app.exception
     assert any(button.label == "Import validated batch" for button in app.button)
+
+
+def test_frontend_agent_investigates_and_confirms_case_action(graph, monkeypatch):
+    name, registry, store = graph
+    files = base_csv_sources()
+    as_of = read_batch(ROOT / "data/demo/base").manifest.as_of
+    validated = validate_csv_sources(files, mode="base", as_of=as_of, store=store, graph=name)
+    import_validated_csv(
+        validated, files, mode="base", as_of=as_of, graph_name=name, registry_path=registry
+    )
+    monkeypatch.setattr(streamlit_app, "available_graphs", lambda: [name])
+    monkeypatch.setattr(
+        streamlit_app,
+        "selected_store",
+        lambda selected: GraphStore(Settings(graph_name=selected)),
+    )
+    fake_settings = AgentSettings(
+        _env_file=None,
+        agent_provider="anthropic",
+        RINGLENS_ANTHROPIC_API_KEY="test-only",
+        agent_model="mock-model",
+    )
+    monkeypatch.setattr(streamlit_app, "AgentSettings", lambda: fake_settings)
+    seed = "ref_9082163771ef0a5e5b26"
+
+    class DemoProvider:
+        def next_turn(self, history, schemas, mode):
+            outputs = [
+                json.loads(item["output"])
+                for item in history
+                if item.get("type") == "function_call_output"
+            ]
+            if not outputs:
+                name, args = "analyze_refund", {"refund_id": seed}
+            elif len(outputs) == 1:
+                name, args = (
+                    "get_review_context",
+                    {"assessment_reference": outputs[0]["data"]["assessment_reference"]},
+                )
+            elif len(outputs) == 2 and mode == "investigate":
+                name, args = (
+                    "apply_case_policy",
+                    {"assessment_reference": outputs[0]["data"]["assessment_reference"]},
+                )
+            else:
+                return ProviderTurn(finished=True)
+            call = {
+                "type": "function_call",
+                "name": name,
+                "arguments": json.dumps(args),
+                "call_id": f"call_{len(outputs)}",
+            }
+            return ProviderTurn(items=[call], calls=[call])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(streamlit_app, "create_provider", lambda settings: DemoProvider())
+
+    def app_entry():
+        from ringlens import streamlit_app as dashboard
+
+        dashboard.main()
+
+    app = AppTest.from_function(app_entry, default_timeout=15).run()
+    app.sidebar.radio[0].set_value("Investigate").run()
+    next(widget for widget in app.selectbox if widget.label == "Select a stored refund").set_value(
+        seed
+    ).run()
+    next(button for button in app.button if button.label == "Ask agent · read-only").click().run()
+    assert not app.exception
+    assert app.session_state["agent_result"].status == "COMPLETE"
+    assert app.session_state["agent_result"].mode == "assess"
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[0]]
+    assert store.read("MATCH (r:AgentRun) RETURN count(r)").result_set == [[1]]
+    write_button = next(
+        button for button in app.button if button.label == "Run agent and apply case policy"
+    )
+    write_button.click().run()
+    assert not app.exception
+    result = app.session_state["agent_result"]
+    assert result.status == "COMPLETE" and result.mode == "investigate"
+    assert [a["action"] for a in result.activities if a["tool"] == "apply_case_policy"] == [
+        "CREATED"
+    ]
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[1]]
+    assert store.read("MATCH (r:AgentRun) RETURN count(r)").result_set == [[2]]
+    app.run()
+    assert not app.exception
+    assert store.read("MATCH (r:AgentRun) RETURN count(r)").result_set == [[2]]
+    write_button = next(
+        button for button in app.button if button.label == "Run agent and apply case policy"
+    )
+    write_button.click().run()
+    assert app.session_state["agent_result"].status == "COMPLETE"
+    assert "EXISTING_UNCHANGED" in app.session_state["agent_result"].response
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[1]]

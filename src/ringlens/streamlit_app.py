@@ -100,6 +100,8 @@ def _clear_cached_work():
         "scan",
         "scan_key",
         "agent_result",
+        "agent_result_key",
+        "agent_result_refund_id",
         "case_action",
     ):
         st.session_state.pop(key, None)
@@ -110,6 +112,59 @@ def _service_error(error):
     if isinstance(error, (ValueError, ProviderError, GraphStoreError)):
         return str(error)
     return "Operation failed; inspect database availability and retry with the same input."
+
+
+def _run_selected_agent(store, message, mode, settings, refund_id, as_of):
+    provider = create_provider(settings)
+    try:
+        return run_agent(
+            store,
+            message,
+            mode=mode,
+            provider=provider,
+            settings=settings,
+            required_refund_id=refund_id,
+            required_as_of=as_of,
+            required_window_days=30,
+        )
+    finally:
+        provider.close()
+
+
+def _show_agent_run(response, refund_id):
+    st.subheader("Agent run")
+    tone = (
+        "ready"
+        if response.status == "COMPLETE"
+        else "error"
+        if response.status == "FAILED"
+        else "warning"
+    )
+    st.markdown(
+        _chip(f"{response.status} · {response.mode}", tone),
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Run {response.run_id} · requested refund {refund_id}")
+    confirmed = [
+        activity
+        for activity in response.activities
+        if activity["tool"] == "apply_case_policy" and activity["status"] == "OK"
+    ]
+    if confirmed:
+        action = confirmed[-1]
+        message = f"Confirmed case action: {action['action']}; case {action['case_id'] or 'none'}."
+        if action["action"] in {"CREATED", "UPDATED", "REOPENED"}:
+            st.success(message)
+        else:
+            st.info(message)
+    elif response.mode == "investigate":
+        st.warning("No case action was confirmed by the agent tools in this run.")
+    if response.status != "COMPLETE":
+        st.warning("Agent run did not complete. Inspect tool activity and confirmed case state.")
+    st.caption("Tool activity · application tools perform graph reads and policy-controlled writes")
+    if response.activities:
+        st.dataframe(response.activities, hide_index=True)
+    st.text(response.response)
 
 
 def _badge(status):
@@ -503,6 +558,73 @@ def _investigate(store, graph, state):
             st.session_state.pop("case_action", None)
         except Exception as error:
             st.error(_service_error(error))
+    st.subheader("Investigation agent")
+    st.caption(
+        "Run the complete tool-calling workflow on the selected graph. The agent uses the "
+        "imported data-through time and a 30-day window. The custom time/window above apply "
+        "to Assess refund only. A write-enabled run may create or update a case; neither "
+        "option records a human review. Each click calls the configured provider."
+    )
+    settings = AgentSettings()
+    configured = bool(
+        (
+            settings.anthropic_api_key
+            if settings.agent_provider == "anthropic"
+            else settings.openai_api_key
+        )
+        and settings.agent_model
+    )
+    if not configured:
+        st.info("Configure an agent provider key and model in .env to enable these buttons.")
+    with st.form("agent_form"):
+        agent_refund_id = st.text_input("Agent refund ID", value=refund_id)
+        question = st.text_input(
+            "Follow-up question (read-only)",
+            "Explain the strongest graph connection and prior reviews",
+        )
+        read_only = st.form_submit_button("Ask agent · read-only", disabled=not configured)
+        write_enabled = st.form_submit_button(
+            "Run agent and apply case policy", type="primary", disabled=not configured
+        )
+    if read_only or write_enabled:
+        st.session_state.pop("agent_result", None)
+        st.session_state.pop("agent_result_key", None)
+        st.session_state.pop("agent_result_refund_id", None)
+        mode = "investigate" if write_enabled else "assess"
+        message = (
+            f"Investigate refund {agent_refund_id} and open a case if it needs review. "
+            "Consult prior human reviews and explain the graph evidence and confirmed action."
+            if write_enabled
+            else f"Explain refund {agent_refund_id}. {question}"
+        )
+        with st.status("Agent is using graph tools", expanded=True) as status_box:
+            try:
+                response = _run_selected_agent(
+                    store, message, mode, settings, agent_refund_id, state["as_of"]
+                )
+                st.session_state.agent_result = response
+                st.session_state.agent_result_key = (graph, state["revision"])
+                st.session_state.agent_result_refund_id = agent_refund_id
+                st.session_state.pop("case_action", None)
+                if write_enabled and any(
+                    activity["tool"] == "apply_case_policy" and activity["status"] == "OK"
+                    for activity in response.activities
+                ):
+                    st.session_state.pop("scan", None)
+                    st.session_state.pop("scan_key", None)
+                status_box.update(
+                    label=f"Agent run {response.status}",
+                    state="complete" if response.status == "COMPLETE" else "error",
+                )
+            except Exception as error:
+                status_box.update(label="Agent run could not be confirmed", state="error")
+                st.error(_service_error(error))
+                st.info("Inspect Cases & Reviews before retrying an uncertain write-enabled run.")
+    if st.session_state.get("agent_result_key") == (graph, state["revision"]):
+        _show_agent_run(
+            st.session_state.agent_result,
+            st.session_state.agent_result_refund_id,
+        )
     result = (
         st.session_state.get("assessment")
         if st.session_state.get("assessment_key") == key
@@ -681,44 +803,6 @@ def _investigate(store, graph, state):
     action = st.session_state.get("case_action")
     if action:
         st.info(f"Case action: {action.action}; case {action.case_id or 'none'}. {action.reason}")
-    st.subheader("Agent explanation (optional)")
-    settings = AgentSettings()
-    configured = bool(
-        (
-            settings.anthropic_api_key
-            if settings.agent_provider == "anthropic"
-            else settings.openai_api_key
-        )
-        and settings.agent_model
-    )
-    if not configured:
-        st.caption("No API key/model configured. Graph investigation and cases remain available.")
-    with st.form("agent_form"):
-        question = st.text_input(
-            "Follow-up question", "Explain the strongest graph connection and prior reviews"
-        )
-        ask = st.form_submit_button("Ask agent", disabled=not configured)
-    if ask:
-        try:
-            provider = create_provider(settings)
-            try:
-                response = run_agent(
-                    store,
-                    f"For refund {refund_id}: {question}",
-                    mode="assess",
-                    provider=provider,
-                    settings=settings,
-                )
-            finally:
-                provider.close()
-            st.session_state.agent_result = response
-        except Exception as error:
-            st.error(_service_error(error))
-    response = st.session_state.get("agent_result")
-    if response:
-        st.write(f"Agent run {response.run_id}: {response.status}")
-        st.text(response.response)
-        st.dataframe(response.activities, hide_index=True)
 
 
 def _cases_reviews(store, graph, state):

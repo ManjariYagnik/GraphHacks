@@ -41,9 +41,12 @@ The five sections are:
   graphs. Uploaded files never contain scenario labels or case data.
 - **Investigate:** choose/search a refund, set inclusive `as_of - window_days` to
   `as_of` boundaries, inspect deterministic rule measurements, connected accounts,
-  depths, bursts, actual paths and review comparison. An explicit button calls
-  the existing policy-controlled case writer. An optional read-only agent form
-  calls the configured provider only when submitted.
+  depths, bursts, actual paths and review comparison. The **Investigation agent**
+  panel is available before a manual assessment: **Ask agent · read-only** calls
+  assess mode; **Run agent and apply case policy** calls investigate mode. The
+  latter can create/update/reopen/skip a case only through the backend policy
+  tool. A separate deterministic case button remains after **Assess refund**.
+  Agent buttons call the configured paid provider only when submitted.
 - **Cases & Reviews:** published cases, immutable assessment history, and an
   explicit human review form. LOW assessments can be reviewed without creating a
   case. Review scope is selected by rule and recomputed against FalkorDB; closure
@@ -82,6 +85,14 @@ restart Streamlit to load the updated form code.
 4. Click **Investigate and apply case policy** to request a case action. The
    service rechecks READY status, input revision and review context; repeat
    actions reuse the same case/assessment. **Cases & Reviews** shows the result.
+   To show the complete tool-calling agent in the frontend instead, click
+   **Run agent and apply case policy** in the Investigation agent panel. It
+   starts from the selected refund, uses the imported data-through time and a
+   30-day window, retrieves graph evidence and review context, then calls the
+   same policy service. The panel shows run ID/status, sanitized tool activity,
+   grounded explanation, and a case action only when the tool confirms it.
+   The bound refund ID prevents a tool call for another refund from authorizing
+   a case write. Ordinary rerenders do not call the provider again.
 5. For the review-memory example, begin instead with household refund
    `ref_4d44e5cc3e0a8dae77fd` on base data (35/LOW). Save a human review of
    rules R1/R5 without creating a case. Download the six-refund append sample,
@@ -108,6 +119,13 @@ supports pan/zoom and selected-path highlighting; a node-detail selector and
 edge/evidence tables provide a text alternative. Address connections support
 evidence only and do not drive traversal. The frontend never reads evaluation
 labels, creates score rules, or invents graph edges.
+
+The custom assessment time/window controls apply to the deterministic **Assess
+refund** form. The agent panel intentionally uses the dataset's current imported
+horizon and standard 30-day window; its caption states this before a paid run.
+Read-only agent mode saves an AgentRun audit but no case/review mutation. Human
+review remains a separate explicit action in **Cases & Reviews**. Provider mock
+tests verify the UI/tool workflow; they are not a live Claude smoke test.
 
 For a local smoke check:
 

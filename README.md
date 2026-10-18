@@ -16,6 +16,34 @@ Persistent scoped human reviews and a native tool-calling OpenAI or Claude agent
 are available. The local Streamlit dashboard adds CSV upload, graph-derived
 insights, investigation paths, cases and reviews. No API server is required.
 
+## How the graph drives an investigation
+
+```mermaid
+flowchart LR
+    Account -- PLACED --> Order
+    Order -- USED_DEVICE --> Device
+    Order -- SHIPPED_TO --> Address
+    Account -- REQUESTED_REFUND --> Refund
+    Refund -- FOR_ORDER --> Order
+    Investigation -- INCLUDES --> Account
+    Investigation -- HAS_ASSESSMENT --> Assessment
+    Assessment -- HAS_EVIDENCE --> Evidence
+    Investigation -- HAS_REVIEW --> Review
+    Review -- REVIEWS_ASSESSMENT --> Assessment
+    Review -- ABOUT --> Evidence
+```
+
+Starting from a refund, RingLens queries FalkorDB for its requesting account,
+order, device and shipping address. It then follows `Account → Order → Device
+← Order ← Account` for two in-window expansions, preserving the returned paths.
+Orders and refunds for the discovered accounts supply the timestamps and amounts
+used by deterministic scoring rules. Addresses support evidence but do not drive
+account discovery. The agent calls typed tools to obtain this graph-backed
+assessment, prior human reviews, and the policy-controlled case action; it does
+not invent edges or calculate the official score. See [graph schema](docs/graph-schema.md),
+[investigation queries](src/ringlens/investigation_queries.py), and
+[agent tools](src/ringlens/agent_tools.py).
+
 ## Setup
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Docker with
@@ -221,12 +249,19 @@ new graph in the sidebar. Overview shows 50 accounts, 250 orders and 42 refunds;
 42/250 in-window orders were refunded (16.8%). Assess
 `ref_9082163771ef0a5e5b26` to see a 90/HIGH demonstration priority and a
 two-hop bridge path. Use **Investigate and apply case policy** to request a
-case; repeated requests reuse the completed case/assessment. For the household
-review-memory example, assess `ref_4d44e5cc3e0a8dae77fd`, explicitly save a
+case without an LLM. To show the full tool-calling workflow in the UI, use
+**Run agent and apply case policy** on the Investigate page: the configured
+provider requests graph analysis and review context, and the backend confirms
+the case action. **Ask agent · read-only** gives a paid explanation without a
+case write. The panel shows run status, tool activity, grounded evidence and
+confirmed case ID. Repeated requests reuse the completed case/assessment.
+For the household review-memory example, assess `ref_4d44e5cc3e0a8dae77fd`,
+explicitly save a
 human review of R1/R5, then upload the refund-only append CSV at
 `2026-10-17T11:00:00Z`. Earlier review history remains visible beside new
-refund-burst evidence. The optional follow-up agent uses the configured provider
-only when submitted.
+refund-burst evidence. Agent calls use the selected graph and spend provider
+credits only when a form button is submitted; deterministic analysis stays usable
+without an LLM key.
 
 CSV IDs, timestamps, INR paise, limits, errors, and mappings are documented in
 the [CSV contract](docs/csv-format.md). The [frontend guide](docs/frontend.md)
