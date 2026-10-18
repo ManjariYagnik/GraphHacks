@@ -303,9 +303,18 @@ def _upload(store, graph, state):
         if create == "Retry/reupload selected base" and state["as_of"]
         else int(datetime.now(UTC).timestamp())
     )
+    # A clock-derived `value=` changes on rerun. For an unkeyed text input,
+    # Streamlit then creates a new widget and silently changes the validated
+    # fingerprint. Initialize once for this import target instead.
+    input_context = (create, target, state["as_of"])
+    if st.session_state.get("upload_as_of_context") != input_context:
+        st.session_state.upload_as_of_context = input_context
+        st.session_state.upload_as_of = utc(default_as_of).replace(" UTC", "Z").replace(" ", "T")
+        st.session_state.pop("csv_validation", None)
     as_of_text = st.text_input(
         "Data through (UTC)",
-        value=utc(default_as_of).replace(" UTC", "Z").replace(" ", "T"),
+        key="upload_as_of",
+        persist_state="session",
         help="Whole-second UTC timestamp; this is the batch's assessment horizon.",
     )
     source_timezone = (
@@ -407,7 +416,10 @@ def _upload(store, graph, state):
 
         current = input_fingerprint(sources, mode, as_of, target, revision, source_timezone)
         if current != validation.fingerprint:
-            st.warning("Inputs or settings changed. Preview and validate again before importing.")
+            st.warning(
+                "Inputs or settings changed since validation (files, mappings, data-through "
+                "time, or graph). Click Preview and validate again before importing."
+            )
             return
         for preview in validation.previews:
             st.subheader(f"{preview.filename} · {preview.count} valid rows")

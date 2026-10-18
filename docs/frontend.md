@@ -57,6 +57,13 @@ accepts only server-issued graph names plus the configured legacy graph. Selecti
 a graph is a local routing choice, not authentication. Do not expose this app to
 the public Internet without adding authentication and authorization.
 
+The upload form keeps its data-through value stable across Streamlit reruns. It
+resets the default only when the import mode, target graph, or imported horizon
+changes. Editing files, mappings, time, or graph after validation still requires
+another **Preview and validate** click before import; this is an intentional
+pre-write safeguard. If an older running app keeps showing a stale-input warning,
+restart Streamlit to load the updated form code.
+
 ## Upload-to-insights demo
 
 1. Download **complete synthetic sample**, unzip it, and upload the five CSVs.

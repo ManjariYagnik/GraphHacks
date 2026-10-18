@@ -1,5 +1,23 @@
 # RingLens implementation status
 
+## Upload validation rerun fix
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+Fixed a Streamlit upload-form state bug: the unkeyed data-through text input was
+given a new wall-clock default every rerun. A changed default reset its widget
+identity, so an unchanged CSV batch could appear to have changed immediately
+after validation. The field now uses a stable session key and is initialized
+once per import mode/target/horizon. Switching import context clears the old
+validation result; actual file, mapping, timestamp, or graph changes still
+invalidate it before writes. A real-FalkorDB AppTest regression test covers
+clock advancement, repeated reruns, deliberate time edits, and revalidation.
+`.venv/bin/pytest --run-integration -q --tb=short` passed **389 tests**, with
+2 opt-in tests skipped (paid live provider and database restart). Ruff lint,
+format and `git diff --check` passed.
+
+---
+
 ## Dashboard visual refinement
 
 Updated: 2026-10-18 (Asia/Kolkata).

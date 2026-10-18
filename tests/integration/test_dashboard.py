@@ -3,7 +3,9 @@
 import csv
 import io
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -281,3 +283,58 @@ def test_ui_rerenders_do_not_repeat_writes(graph, monkeypatch):
     assert not app.exception
     assert any("HIGH" in metric.value for metric in app.metric)
     assert counts() == before
+
+
+def test_upload_validation_survives_clock_change_and_rerun(graph, monkeypatch):
+    name, _, _ = graph
+    files = base_csv_sources()
+    uploads = [
+        SimpleNamespace(name=source.filename, getvalue=lambda data=source.content: data)
+        for source in files
+    ]
+    monkeypatch.setattr(streamlit_app, "available_graphs", lambda: [name])
+    monkeypatch.setattr(
+        streamlit_app,
+        "selected_store",
+        lambda selected: GraphStore(Settings(graph_name=selected)),
+    )
+    monkeypatch.setattr(streamlit_app.st, "file_uploader", lambda *args, **kwargs: uploads)
+
+    class Clock(datetime):
+        now_seconds = int(datetime(2026, 10, 18, tzinfo=UTC).timestamp())
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(cls.now_seconds, tz=tz)
+
+    monkeypatch.setattr(streamlit_app, "datetime", Clock)
+
+    def app_entry():
+        from ringlens import streamlit_app as dashboard
+
+        dashboard.main()
+
+    app = AppTest.from_function(app_entry, default_timeout=15).run()
+    app.sidebar.radio[0].set_value("Upload Data").run()
+    assert not app.exception
+    next(widget for widget in app.text_input if widget.label == "Data through (UTC)").set_value(
+        "2026-10-15T10:00:00Z"
+    ).run()
+    next(button for button in app.button if button.label == "Preview and validate").click().run()
+    assert not app.exception
+    assert any(button.label == "Import validated batch" for button in app.button)
+
+    Clock.now_seconds += 5
+    app.run()
+    assert not app.exception
+    as_of_widget = next(widget for widget in app.text_input if widget.label == "Data through (UTC)")
+    assert as_of_widget.value == "2026-10-15T10:00:00Z"
+    assert any(button.label == "Import validated batch" for button in app.button)
+    assert not any("Inputs or settings changed" in warning.value for warning in app.warning)
+
+    as_of_widget.set_value("2026-10-15T11:00:00Z").run()
+    assert any("Inputs or settings changed" in warning.value for warning in app.warning)
+    assert not any(button.label == "Import validated batch" for button in app.button)
+    next(button for button in app.button if button.label == "Preview and validate").click().run()
+    assert not app.exception
+    assert any(button.label == "Import validated batch" for button in app.button)
