@@ -1,5 +1,65 @@
 # RingLens implementation status
 
+## Five example workflows and hackathon demo
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+Added `example/example_01` through `example/example_05`, each with canonical
+synthetic source records in a demo-only `data.json` envelope and a reproducible
+workflow guide. The selected bridge example (`04`) shows three accounts after
+the first FalkorDB device expansion and five after the second. Its live graph
+assessment is 90/HIGH (R1 +25, R2 +25, R3 +25, R4 +15). The runner uses existing
+models, canonical manifest hashing, schema initialization, ingestion,
+verification, graph investigation, and case policy; it creates a new isolated
+graph and never adopts an existing one. Case and source records are read back
+through a fresh database connection. Optional human review in example 05 is
+accepted only when all human-authored review flags are supplied; a paid agent
+call is separately opt-in. `example/` is excluded from future runtime Docker
+contexts, like `evaluation/`.
+
+Five example dry-runs passed without database access. Baseline model,
+validation, fixture, and scoring checks passed **179 tests**. The new unit checks
+passed **8 tests** and include strict batch round-trips, a no-DB dry-run,
+provider preflight, and an orphan-reference rejection. All five live example
+workflows passed against real disposable FalkorDB test graphs; a sixth
+integration test used a deterministic provider mock with real graph tools and
+confirmed an AgentRun audit. The selected standalone command also passed and
+left its generated graph for inspection. The example 05 explicit
+review test observed 35/LOW before append, 100/HIGH afterward, 2 benign-covered
+facts and 6 material-new facts; its saved review and case were readable after
+reconnection. The retained bridge graph also passed the documented CLI `graph
+verify` and `cases show` read-backs. The final
+`.venv/bin/pytest --run-integration -q --tb=short` run passed **408 tests**,
+with two opt-in skips (live paid provider and server restart). Ruff lint/format
+and `git diff --check` passed. The first full-suite collection attempt exposed duplicate
+new test-module filenames; they were renamed and the rerun passed. No paid
+provider call, server restart durability test, or manual pixel-level browser
+walkthrough was performed for this milestone. See
+`example/demo/expected_output.md` for measured results and variable IDs.
+
+---
+
+## Short IDs in the investigation graph
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+The Streamlit graph now renders short, type-prefixed labels (`AC1`, `OR1`,
+`DV1`, `AD1`, `RF1`) instead of opaque source IDs. The path selector, node-detail
+selector and edge table use the same labels; an expanded ID key maps displayed
+nodes to their full IDs. Node identity and directed edge endpoints still use
+canonical source IDs, and labels are stable across path selection and display
+caps within the same assessment. Labels are only a local visual aid, so a later
+assessment may assign different numbers. No graph data, scoring, or cases change.
+
+Verification: `tests/unit/test_graph_view.py` passed (1 test), and
+`tests/integration/test_dashboard.py --run-integration` passed (6 tests) against
+disposable graphs in the healthy local FalkorDB. Ruff lint and format checks,
+plus `git diff --check`, passed. The first sandboxed integration attempt could
+not access the loopback database; the run with localhost access passed. A
+pixel-level browser review was not performed.
+
+---
+
 ## Complete agent workflow in the frontend
 
 Updated: 2026-10-18 (Asia/Kolkata).

@@ -16,6 +16,13 @@ SYMBOLS = {
     "Address": "triangle",
     "Refund": "pin",
 }
+SHORT_PREFIXES = {
+    "Account": "AC",
+    "Order": "OR",
+    "Device": "DV",
+    "Address": "AD",
+    "Refund": "RF",
+}
 
 
 def graph_projection(
@@ -59,13 +66,21 @@ def graph_projection(
                     for edge in stable_path(proof.path)["edges"]
                 }
                 break
+    # Assign display labels from every path, so highlighting or capping the view
+    # cannot change a node's short label within this assessment.
+    short_ids = {}
+    prefix_counts = {}
+    for id_, node in sorted(all_nodes.items(), key=lambda item: (item[1]["labels"][0], item[0])):
+        prefix = SHORT_PREFIXES.get(node["labels"][0], "N")
+        prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+        short_ids[id_] = f"{prefix}{prefix_counts[prefix]}"
     nodes = []
     for id_, node in sorted(shown_nodes.items()):
         label = node["labels"][0]
         nodes.append(
             {
                 "id": id_,
-                "name": id_,
+                "name": short_ids[id_],
                 "category": label,
                 "symbol": SYMBOLS.get(label, "circle"),
                 "symbolSize": 36 if id_ in selected_nodes else 30 if label == "Account" else 25,
@@ -98,6 +113,7 @@ def graph_projection(
         "nodes": nodes,
         "edges": edges,
         "node_details": shown_nodes,
+        "short_ids": short_ids,
         "omitted_nodes": len(all_nodes) - len(shown_nodes),
         "omitted_edges": len(all_edges) - len(shown_edges),
     }

@@ -715,12 +715,22 @@ def _investigate(store, graph, state):
     else:
         st.caption("No qualifying three-account bursts in this window.")
     st.subheader("Graph evidence")
+    projection = graph_projection(result)
+    id_key = projection["short_ids"]
+    path_labels = {}
+    for index, proof in enumerate(result.paths[:200], start=1):
+        ids = [node["id"] for node in stable_path(proof.path)["nodes"]]
+        route = " → ".join(id_key[id_] for id_ in ids[:6])
+        if len(ids) > 6:
+            route += " → …"
+        path_labels[proof.id] = f"Path {index} · {route}"
     selected_path = st.selectbox(
         "Highlight an evidence path",
         [None, *[proof.id for proof in result.paths[:200]]],
-        format_func=lambda value: value or "All paths",
+        format_func=lambda value: path_labels[value] if value else "All paths",
     )
-    projection = graph_projection(result, selected_path_id=selected_path)
+    if selected_path:
+        projection = graph_projection(result, selected_path_id=selected_path)
     if projection["nodes"]:
         st.echarts_chart(
             echarts_spec(projection),
@@ -736,11 +746,41 @@ def _investigate(store, graph, state):
             "Entity legend: teal Account · blue Order · violet Device · "
             "indigo Address · pink Refund"
         )
-        node_id = st.selectbox("Node details", sorted(projection["node_details"]))
+        st.caption("Short labels are for this graph view; FalkorDB keeps the full IDs.")
+        with st.expander("ID key · short labels and actual IDs", expanded=True):
+            st.dataframe(
+                [
+                    {
+                        "short_id": projection["short_ids"][id_],
+                        "entity": node["labels"][0],
+                        "actual_id": id_,
+                    }
+                    for id_, node in sorted(
+                        projection["node_details"].items(),
+                        key=lambda item: (
+                            item[1]["labels"][0],
+                            item[0],
+                        ),
+                    )
+                ],
+                hide_index=True,
+                height=240,
+            )
+        node_id = st.selectbox(
+            "Node details",
+            sorted(projection["node_details"]),
+            format_func=lambda id_: f"{projection['short_ids'][id_]} · {id_}",
+        )
         st.json(projection["node_details"][node_id])
         st.dataframe(
             [
-                {"source": edge["source"], "relationship": edge["name"], "target": edge["target"]}
+                {
+                    "source": projection["short_ids"][edge["source"]],
+                    "source_id": edge["source"],
+                    "relationship": edge["name"],
+                    "target": projection["short_ids"][edge["target"]],
+                    "target_id": edge["target"],
+                }
                 for edge in projection["edges"]
             ],
             hide_index=True,

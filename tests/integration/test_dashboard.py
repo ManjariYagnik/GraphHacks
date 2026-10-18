@@ -96,6 +96,16 @@ def test_csv_base_append_metrics_paths_and_idempotency(graph):
         assert dataset_status(selected)["revision"] == result.input_revision
         projection = graph_projection(result, max_nodes=100, max_edges=150)
         assert projection["edges"] and projection["omitted_edges"] >= 0
+        assert all(
+            node["name"] == projection["short_ids"][node["id"]] for node in projection["nodes"]
+        )
+        assert len({node["name"] for node in projection["nodes"]}) == len(projection["nodes"])
+        assert (
+            projection["short_ids"]
+            == graph_projection(result, selected_path_id=result.paths[-1].id, max_nodes=3)[
+                "short_ids"
+            ]
+        )
         actual = {(edge["source"], edge["name"], edge["target"]) for edge in projection["edges"]}
         assert actual <= {
             (edge[0], edge[1], edge[2])

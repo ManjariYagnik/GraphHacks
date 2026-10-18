@@ -269,6 +269,28 @@ documents graph selection, import retry, inclusive metrics, path visualization,
 and the local/private scope. Keep the app bound to loopback; dataset selection
 does not provide multi-user authentication.
 
+## Five hackathon example workflows
+
+The [example guide](example/README.md) packages five validated synthetic
+workflows: an ordinary refund, shared household resources, a one-device cluster,
+a two-device bridge, and later evidence after an explicit human review. The
+[4–5 minute demo script](example/demo/demo_script.md) selects the bridge case
+because FalkorDB's second device expansion is essential to discover all five
+accounts. Run it without a provider key:
+
+```sh
+uv run python example/demo/demo.py --example 04 --dry-run
+uv run python example/demo/demo.py --example 04
+```
+
+The live runner creates a new disposable graph, imports and verifies source
+records, investigates the seed, applies the existing case policy, and reads the
+case back through a new database connection. `--with-agent` is an explicit paid
+option for a live read-only tool-calling explanation; no provider request occurs
+by default. The runner preserves the graph for UI/CLI inspection and never
+adopts or deletes an existing graph. See [measured output](example/demo/expected_output.md)
+and the [frontend guide](docs/frontend.md) for how to select that graph.
+
 ## Durability and shutdown
 
 Compose pins released

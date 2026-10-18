@@ -115,8 +115,14 @@ is deleted by the UI.
 The visualization is a bounded projection of the investigation service's actual
 FalkorDB path records. It displays up to 80 nodes and 120 directed edges and
 reports omissions separately from analytical completeness. The ECharts graph
-supports pan/zoom and selected-path highlighting; a node-detail selector and
-edge/evidence tables provide a text alternative. Address connections support
+supports pan/zoom and selected-path highlighting. Nodes use short labels such as
+`AC1` (Account), `OR1` (Order), `DV1` (Device), `AD1` (Address), and `RF1`
+(Refund). Labels are assigned deterministically within an assessment; the
+expanded **ID key** maps every displayed label to its full FalkorDB ID. The
+path selector and edge table use the same labels, while node details and edge
+endpoints retain the full IDs. These labels are display-only and must not be
+used as source IDs across assessments. A node-detail selector and edge/evidence
+tables provide a text alternative. Address connections support
 evidence only and do not drive traversal. The frontend never reads evaluation
 labels, creates score rules, or invents graph edges.
 
