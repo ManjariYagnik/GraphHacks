@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
     "redis>=8.1,<9",
+    "streamlit>=1.62,<2",
     "typer>=0.15,<1",
 ]
 

@@ -12,8 +12,9 @@ synthetic fixtures and file validation. Phase 4 adds validated, resumable Falkor
 ingestion and graph verification. Phase 5 adds two device expansions, evidence
 paths, and transparent v1 priority rules. The case milestone adds explicit case
 creation, immutable assessment history, duplicate prevention, and saved-case readers.
-The current milestone adds persistent scoped human reviews and a native tool-calling
-OpenAI or Claude agent. API servers and the dashboard remain deferred.
+Persistent scoped human reviews and a native tool-calling OpenAI or Claude agent
+are available. The local Streamlit dashboard adds CSV upload, graph-derived
+insights, investigation paths, cases and reviews. No API server is required.
 
 ## Setup
 
@@ -189,8 +190,49 @@ are never an agent tool. Grounded final responses name confirmed evidence, sourc
 reviews and case actions. Fresh sessions retrieve memory from FalkorDB. The
 [agent guide](docs/agent.md) documents tools, bounds, credentials, setup and the
 initial-review/restart/append demonstration. Provider mocks exercise orchestration;
-the user has verified an OpenAI read-only run. Claude SDK/orchestration are tested
-with mocked HTTP and real graph tools; live Claude behavior awaits key configuration.
+the user has verified OpenAI and Anthropic read-only runs. Claude SDK/orchestration
+are also tested with mocked HTTP and real graph tools; paid live calls remain opt-in.
+
+## Local Streamlit dashboard
+
+Start FalkorDB, install locked dependencies, and open the private dashboard:
+
+```sh
+uv sync --locked
+docker compose up -d --wait
+uv run ringlens doctor
+uv run streamlit run src/ringlens/streamlit_app.py --server.address 127.0.0.1
+```
+
+Visit `http://127.0.0.1:8501`. The five sections are Overview, Upload Data,
+Investigate, Cases & Reviews, and Import History. Upload accepts entity CSVs,
+offers column mapping and bounded previews, validates the whole batch, then
+imports only on an explicit click. Downloadable templates and full synthetic
+base/append CSV bundles are in the UI; committed copies are in
+[`data/demo_csv/base`](data/demo_csv/base) and
+[`data/demo_csv/new_evidence`](data/demo_csv/new_evidence). No LLM key is needed
+for upload, graph metrics, deterministic scoring, case policy or human review.
+The light violet/teal theme, labelled status badges, and graph entity legend are
+configured in `.streamlit/`; see the [frontend guide](docs/frontend.md).
+
+For a first run, upload the five base CSVs, choose **Create new dataset**, and
+set Data through to `2026-10-15T10:00:00Z`. Validate, import, then choose the
+new graph in the sidebar. Overview shows 50 accounts, 250 orders and 42 refunds;
+42/250 in-window orders were refunded (16.8%). Assess
+`ref_9082163771ef0a5e5b26` to see a 90/HIGH demonstration priority and a
+two-hop bridge path. Use **Investigate and apply case policy** to request a
+case; repeated requests reuse the completed case/assessment. For the household
+review-memory example, assess `ref_4d44e5cc3e0a8dae77fd`, explicitly save a
+human review of R1/R5, then upload the refund-only append CSV at
+`2026-10-17T11:00:00Z`. Earlier review history remains visible beside new
+refund-burst evidence. The optional follow-up agent uses the configured provider
+only when submitted.
+
+CSV IDs, timestamps, INR paise, limits, errors, and mappings are documented in
+the [CSV contract](docs/csv-format.md). The [frontend guide](docs/frontend.md)
+documents graph selection, import retry, inclusive metrics, path visualization,
+and the local/private scope. Keep the app bound to loopback; dataset selection
+does not provide multi-user authentication.
 
 ## Durability and shutdown
 
@@ -234,6 +276,8 @@ uv run pytest tests/integration --run-persistence
 uv run pytest tests/integration/test_ingest.py --run-integration
 uv run pytest tests/integration/test_cases.py --run-integration
 uv run pytest tests/integration/test_reviews.py tests/integration/test_agent.py --run-integration
+uv run pytest tests/unit/test_csv_adapter.py
+uv run pytest tests/integration/test_dashboard.py --run-integration
 # Optional live provider smoke, after configuring key/model (may incur charges):
 uv run pytest tests/integration/test_agent_live.py --run-integration --run-live-agent
 ```

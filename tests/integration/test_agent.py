@@ -234,6 +234,26 @@ def test_assess_permissions_are_enforced_even_for_malicious_model(graph):
     assert store.read("MATCH (r:AgentRun) RETURN count(r)").result_set == [[1]]
 
 
+def test_early_provider_finish_still_reads_review_context(graph):
+    store, _ = graph
+
+    class EarlyFinishProvider:
+        def next_turn(self, history, schemas, mode):
+            if not any(item.get("type") == "function_call_output" for item in history):
+                return call("analyze_refund", {"refund_id": PATTERN})
+            return ProviderTurn(finished=True)
+
+    result = run_agent(store, "Explain the refund", provider=EarlyFinishProvider())
+    assert result.status == "COMPLETE", result.errors
+    assert [activity["tool"] for activity in result.activities] == [
+        "analyze_refund",
+        "get_review_context",
+    ]
+    assert "score=90" in result.response
+    assert "Review context was not retrieved" not in result.response
+    assert store.read("MATCH (i:Investigation) RETURN count(i)").result_set == [[0]]
+
+
 def test_fresh_agent_session_uses_saved_human_memory_then_new_bursts(graph):
     store, settings = graph
     review = record_review(

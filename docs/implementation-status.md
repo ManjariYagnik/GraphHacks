@@ -1,5 +1,110 @@
 # RingLens implementation status
 
+## Dashboard visual refinement
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+Refined the existing Streamlit frontend without changing graph services, CSV
+validation, imports, scoring, cases, or reviews. `.streamlit/config.toml` sets
+the light violet/teal theme with accessible text and table-header colours;
+`.streamlit/style.css` handles bounded content width, sidebar selection, card
+spacing, metrics, upload steps, tables, buttons, focus and narrow-screen layout.
+All five screens now have consistent headings and descriptions. Overview has
+coloured metric icons and a teal refund-activity chart. Upload has a tinted
+introduction, four-step workflow and labelled validation count. Investigation
+has a priority badge and stronger selected-path emphasis; the graph's entity
+palette avoids risk-status orange/red. Case/review and import screens keep their
+existing explicit-write controls and backend results. Existing worktree changes
+from the prior frontend milestone were preserved.
+
+Official Streamlit [theming](https://docs.streamlit.io/develop/concepts/configuration/theming),
+[theme configuration](https://docs.streamlit.io/develop/api-reference/configuration/config.toml),
+and [bar chart](https://docs.streamlit.io/develop/api-reference/charts/st.bar_chart)
+documentation were checked. `streamlit config show` accepted the configured
+theme. `.venv/bin/pytest tests/unit/test_csv_adapter.py
+tests/integration/test_dashboard.py --run-integration -q --tb=short` passed
+**13 tests**. The full `.venv/bin/pytest --run-integration -q --tb=short` run
+passed **388 tests**, with 2 opt-in tests skipped (paid provider and database
+restart). `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .`, and
+`git diff --check` passed. The initial sandboxed
+integration attempt could not access localhost despite a healthy container;
+rerunning with localhost access passed on disposable graphs. No browser binary
+or Playwright installation was available, so a pixel-level visual review was
+not performed here. A temporary loopback Streamlit server started and its
+`/_stcore/health` endpoint returned `ok`; the server was then stopped.
+
+---
+
+## Local Streamlit CSV-to-insights milestone
+
+Updated: 2026-10-18 (Asia/Kolkata).
+
+Implemented a working local/private Streamlit dashboard without an API server.
+Five sections: Overview, Upload Data, Investigate, Cases & Reviews, Import History.
+FalkorDB remains the runtime truth; no evaluation file or LLM is used for import,
+metrics or deterministic scoring. The earlier Anthropic early-stop memory-lookup
+fix in `agent.py` and its regression test were preserved.
+
+New modules: `csv_adapter.py` enforces bounded CSV parsing, mapping, strict-model
+conversion, physical-row errors, canonical batches and template/sample ZIPs;
+`dashboard_data.py` keeps a local allowlisted graph registry, revalidates before
+single-writer import, and queries graph metrics/scans; `graph_view.py` projects
+actual path nodes/edges into a bounded interactive display; `streamlit_app.py`
+renders the five workflows and delegates writes to existing ingestion/case/review
+services. `.ringlens/datasets.json` is ignored by Git/Docker. Source schema,
+JSONL/manifest contract, score rules and case policy were not changed. Server
+limits are configurable through `RINGLENS_CSV_MAX_*` in `.env.example`.
+
+The committed synthetic CSV examples in `data/demo_csv/base/` contain 50 accounts,
+42 devices, 46 addresses, 250 orders and 42 refunds; the refund-only append CSV
+contains six rows. The Overview's inclusive 30-day refunded-order percentage on
+base data is 42/250 = 16.8%. A sample graph investigation of
+`ref_9082163771ef0a5e5b26` found depth-two accounts and genuine path edges.
+No case or review mutation occurs during preview, navigation, read-only
+assessment, or deterministic batch scanning.
+
+Official Streamlit [installation](https://docs.streamlit.io/get-started/installation/command-line),
+[file uploader](https://docs.streamlit.io/develop/api-reference/widgets/st.file_uploader),
+[forms](https://docs.streamlit.io/develop/api-reference/execution-flow/st.form_submit_button),
+[ECharts graph](https://docs.streamlit.io/develop/api-reference/charts/st.echarts_chart),
+and [AppTest](https://docs.streamlit.io/develop/api-reference/app-testing/st.testing.v1.apptest)
+documentation were checked. `uv add 'streamlit>=1.62,<2'` resolved and locked
+Streamlit 1.66.0 (65 total locked packages). The initial sandbox-only network
+attempt failed DNS; the authorized dependency install succeeded with network
+access. An initial localhost server start was blocked by sandbox socket policy;
+the same loopback-only start succeeded with local socket access.
+
+Checks actually run:
+
+- `UV_CACHE_DIR=.tools/uv-cache .tools/uv-package/bin/uv lock --check --offline`:
+  passed.
+- `.venv/bin/pytest tests/unit/test_csv_adapter.py -q --tb=short`: 9 passed.
+- `.venv/bin/pytest tests/integration/test_dashboard.py --run-integration -q --tb=short`:
+  4 passed on disposable graphs, including real CSV base/append imports,
+  graph metrics, invalid/no-write inputs, multi-hop paths, scoped household review
+  surviving the append, later qualifying case creation, and Streamlit AppTest
+  rerenders without repeated writes.
+- `.venv/bin/pytest --run-integration -q --tb=short`: 388 passed, 2 skipped
+  (explicit paid live agent and persistence-restart tests) in 25.37 seconds.
+- Focused Streamlit investigate-screen AppTest rerun after the final test extension:
+  1 passed, including the HIGH score and interactive chart rendering path.
+- `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`: passed,
+  64 Python files formatted.
+- `.venv/bin/ringlens --help` and importing Streamlit 1.66.0: passed.
+- `.venv/bin/streamlit run src/ringlens/streamlit_app.py --server.address 127.0.0.1
+  --server.port 8519 --server.headless true --browser.gatherUsageStats false`:
+  started on loopback; `curl -fsS http://127.0.0.1:8519/_stcore/health`
+  returned `ok`; server was stopped cleanly.
+
+The full manual browser walkthrough and accessibility review were not available
+from this tool environment. AppTest simulates UI navigation but not browser
+rendering. No paid provider call or database restart was made for this milestone.
+The importer remains a single-writer multi-query operation; a crash may leave
+FAILED/LOADING and requires retry of the original batch. Dataset selection is
+not authentication. The frontend is intentionally bound to loopback.
+
+---
+
 ## Claude provider support
 
 Updated: 2026-10-17 (Asia/Kolkata).

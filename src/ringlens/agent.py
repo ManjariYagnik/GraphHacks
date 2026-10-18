@@ -188,6 +188,18 @@ def run_agent(
                 )
                 audit()
             if turn.finished:
+                # A provider may end its turn after analysis without requesting the
+                # required memory lookup. Complete that read-only dependency in the
+                # application so a grounded assessment does not depend on the
+                # model following the prompt perfectly.
+                for reference in sorted(tools.analyzed_references):
+                    result = tools.assessments[reference]
+                    if result.completeness != "COMPLETE" or reference in tools.contexts:
+                        continue
+                    if len(tools.activities) >= settings.agent_max_tool_calls:
+                        break
+                    tools.execute("get_review_context", {"assessment_reference": reference})
+                    audit()
                 complete = bool(tools.assessments or tools.cases)
                 for reference, result in tools.assessments.items():
                     if reference not in tools.analyzed_references:
